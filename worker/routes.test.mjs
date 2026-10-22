@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 
 // 打包真实 Worker，用替身 fetch 记录发往主控的请求，不连接主控也不使用真实密钥。
-const bundle = await build({ entryPoints: [new URL('./index.ts', import.meta.url).pathname], bundle: true, write: false, format: 'esm', platform: 'neutral' })
+const bundle = await build({ entryPoints: [fileURLToPath(new URL('./index.ts', import.meta.url))], bundle: true, write: false, format: 'esm', platform: 'neutral' })
 const { default: worker } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`)
 
 const TOKEN = 'test-probe-token'

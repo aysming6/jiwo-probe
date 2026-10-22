@@ -1,5 +1,5 @@
 import type { ProbeServer } from './types.ts'
-import { isPermanent } from './renewal.ts'
+import { expiryDays } from './renewal.ts'
 
 export function averageLatency(server: ProbeServer): number | undefined {
   const values = (server.ping || [])
@@ -87,11 +87,8 @@ export function serverHealth(server: ProbeServer): HealthResult {
       issues.push('流量额度偏高')
     }
   }
-  if (server.expires_at && !isPermanent(server)) {
-    const days = Math.ceil(
-      (new Date(`${server.expires_at}T00:00:00`).getTime() - Date.now()) /
-        86400000
-    )
+  const days = expiryDays(server)
+  if (days !== undefined) {
     if (days < 0) {
       score -= 20
       issues.push('服务器已到期')

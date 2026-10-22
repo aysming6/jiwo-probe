@@ -10,13 +10,13 @@ import { ConnectionLabel } from '../ConnectionLabel'
 import { connectionCount } from '../unlocks'
 import { Twemoji } from '../Twemoji'
 import { useNetworkSpeed } from '../use-network-speed'
-import { averageLatency, expiryTime, ratio, validNumber } from '../mini/mini-model'
+import { averageLatency, ratio, validNumber } from '../mini/mini-model'
 import { trafficRuleLabel, trafficUsageLabel } from '../traffic-display'
 import { filledSegments, loadMetric, quotaMetric, resetDays, speedTone, combinedSpeedTrail, type LuminaPlusView, type SpeedTrail } from './luminaplus-model'
 import { SpeedPulse } from './SpeedPulse'
 import { LuminaPlusTrafficPopover } from './LuminaPlusTrafficPopover'
 import { trafficWeek } from './luminaplus-traffic'
-import { CYCLE_LABELS, isPermanent } from '../renewal'
+import { CYCLE_LABELS, expiryDateLabel, expiryDays, isPermanent } from '../renewal'
 import { SystemTrendChart, TrafficDialog } from '../deferred'
 import { ProbeHistoryDialog } from '../components/ProbeHistoryDialog'
 
@@ -60,9 +60,8 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
   const load = loadMetric(server)
   const quota = quotaMetric(server)
   const reset = resetDays(server.period_end)
-  const expiresAt = expiryTime(server)
-  const expiryDate = expiresAt === undefined ? undefined : new Date(expiresAt).toLocaleDateString('sv-SE')
-  const days = expiresAt === undefined ? undefined : Math.ceil((expiresAt - Date.now()) / 86400000)
+  const expiryDate = expiryDateLabel(server)
+  const days = expiryDays(server)
   const age = validNumber(server.uptime) === undefined ? '—' : server.uptime! >= 86400 ? `${Math.floor(server.uptime! / 86400)} 天` : `${Math.floor(server.uptime! / 3600)} 时`
   const permanent = isPermanent(server)
   const cycle = CYCLE_LABELS[server.renewal_cycle || 'month']
@@ -94,7 +93,7 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
     const today = trafficWeek(server).today
     const latency = averageLatency(server)
     return <article className={`lp-list-row${server.online ? '' : ' is-offline'}`} aria-label={name}>
-      <div className="lp-list-identity"><a href={`#/server/${index}`} className="lp-name" title={`${name} · 查看详情`}><i className="lp-status" aria-label={server.online ? '在线' : '离线'} />{flag && <Twemoji>{flag}</Twemoji>}<h2>{name}</h2></a><small>{country || '地区未知'} · {server.provider_name || '服务商未上报'}</small><div className="lp-routes" role="group" aria-label="电信、联通、移动回程"><ReturnRouteBadges routes={server.return_routes || []} telecomPaidPeer={server.telecom_paid_peer} variant="lumina" /></div></div>
+      <div className="lp-list-identity"><a href={`#/server/${index}`} className="lp-name" title={`${name} · 查看详情`}><i className="lp-status" aria-label={server.online ? '在线' : '离线'} />{flag && <Twemoji>{flag}</Twemoji>}<h2>{name}</h2></a><small>{country || '地区未知'} · {server.provider_name || '服务商未上报'}</small>{server.return_routes && <div className="lp-routes" role="group" aria-label="电信、联通、移动回程"><ReturnRouteBadges routes={server.return_routes} telecomPaidPeer={server.telecom_paid_peer} variant="lumina" /></div>}</div>
       <div className="lp-list-resources">{resources.slice(0, 3).map(item => <span key={item.label} className="lp-trend-trigger" {...trendTrigger(RESOURCE_TREND[item.label], item.label)}><span>{item.label}</span><strong>{item.value}</strong></span>)}</div>
       <div className="lp-list-network"><span className="lp-blue"><ArrowUp size={13} /><span className="lp-speed-tone" data-tone={speedTone(server.upload_speed)}>{validNumber(server.upload_speed) === undefined ? '—' : formatSpeed(server.upload_speed!)}</span></span><span className="lp-green"><ArrowDown size={13} /><span className="lp-speed-tone" data-tone={speedTone(server.download_speed)}>{validNumber(server.download_speed) === undefined ? '—' : formatSpeed(server.download_speed!)}</span></span><small className="lp-list-today lp-trend-trigger" {...trendTrigger('traffic', '日流量')} title={`今日上下行合计 ${size(today.total)}（上行 ${size(today.upload)} · 下行 ${size(today.download)}）· 点击查看日流量趋势`} aria-label={`今日上下行合计 ${size(today.total)}，查看日流量趋势`}><span aria-hidden="true"><ArrowUp size={12} /><ArrowDown size={12} /></span>{size(today.total)}</small></div>
       <div className="lp-list-connections"><LuminaPlusConnections server={server} /><small>平均延迟 <strong>{latency === undefined ? '—' : `${latency.toFixed(0)} ms`}</strong></small></div>
@@ -144,7 +143,7 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
     </div>}
     <ConnectionHistory server={server} serverIndex={index} />
     <CardPingGroups ping={server.ping} serverIndex={index} serverName={server.name} variant="classic" averageOnly={view === 'mini'} />
-    <div className="lp-routes" role="group" aria-label="电信、联通、移动回程"><ReturnRouteBadges routes={server.return_routes || []} telecomPaidPeer={server.telecom_paid_peer} variant="lumina" /></div>
+    {server.return_routes && <div className="lp-routes" role="group" aria-label="电信、联通、移动回程"><ReturnRouteBadges routes={server.return_routes} telecomPaidPeer={server.telecom_paid_peer} variant="lumina" /></div>}
     {view === 'mini' ? <footer className="lp-mini-footer"><span title="到期日期"><CalendarDays size={12} /><time dateTime={expiryDate}>{permanent ? '永久' : expiryDate || '未设置到期'}</time></span><strong title={`剩余天数 · 已运行 ${age}`} className={days !== undefined && days <= 30 ? 'is-warm' : ''}>{remainingDays}</strong></footer> : view === 'large' && <div className="lp-lifetime" role="group" aria-label="运行时间与到期信息">
       <div><span><RefreshCw size={15} />运行时间</span><strong className="lp-age">{age}</strong></div>
       <div><span><CalendarDays size={15} />到期日期</span><time dateTime={expiryDate}>{permanent ? '永久' : expiryDate || '未设置'}</time></div>

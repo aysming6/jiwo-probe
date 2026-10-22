@@ -296,10 +296,13 @@
 .lp-card .card-ping-trend { height: 13px; margin-top: 5px; }
 .lp-card .card-ping-bars { height: 6px; gap: 2px; }
 .lp-card .card-ping-bars i { border-radius: 2px; }
-.lp-card .card-ping-bars i.is-good { background: var(--lp-ping-good); }
-.lp-card .card-ping-bars i.is-warn { background: var(--lp-ping-warn,#e3b76a); }
-.lp-card .card-ping-bars i.is-bad { background: var(--lp-ping-bad,#eb8d94); }
+.lp-card .card-ping-bars i.is-good { background: #22c55e; }
+.lp-card .card-ping-bars i.is-warn { background: #eab308; }
+.lp-card .card-ping-bars i.is-bad { background: #ef4444; }
 .lp-card .card-ping-bars i:is(.is-empty,.is-none) { background: var(--lp-track); }
+:root.theme-luminaplus:is(.dark,.gold) .card-ping-head strong[data-level="good"] { color: #4ade80; }
+:root.theme-luminaplus:is(.dark,.gold) .card-ping-head strong[data-level="warn"] { color: #facc15; }
+:root.theme-luminaplus:is(.dark,.gold) .card-ping-head strong[data-level="bad"] { color: #f87171; }
 .lp-routes { margin-top: 16px; }
 .lp-routes .lumina-route-badges { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
 .lp-routes .lumina-route-chip { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 3px 5px; min-width: 0; padding: 7px 4px; border: 1px solid var(--lp-border); border-radius: 8px; color: var(--lp-secondary); background: var(--lp-soft); font-size: 11px; box-shadow: none; }
@@ -591,3 +594,20 @@
   :root.theme-luminaplus .mini-detail-tablist button { padding: 9px 1px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .lp-pulse * { animation: none !important; transition: none !important; } }
+
+/* Keep the full card and detail navigation usable on narrow touch screens. */
+@media (max-width: 760px) {
+  .lp-header-inner { flex-wrap: wrap; }
+  .lp-header nav { margin-left: auto; flex-wrap: wrap; }
+  .lp-header :is(.lp-icon-button,.theme-trigger),
+  .lp-toolbar :is(button,select),
+  .lp-view-switch button,
+  .lp-name,
+  :root.theme-luminaplus :is(.mini-detail-tablist button,.mini-trend-ranges button,.mini-trend-selection button,.mini-trend-mode button,.mini-trend-targets button) { min-height: 44px; }
+  .lp-header :is(.lp-icon-button,.theme-trigger),
+  .lp-view-switch button { min-width: 44px; }
+  .lp-search { min-width: 0; min-height: 44px; }
+  .lp-search input { min-width: 0; font-size: 16px; }
+  :root.theme-luminaplus .mini-detail-close { width: 44px; height: 44px; flex-basis: 44px; }
+  :root.theme-luminaplus .mini-detail-tablist { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}

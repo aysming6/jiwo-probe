@@ -1,5 +1,5 @@
 import type { ProbeBucket, ProbePingSeries, ProbeServer } from './types.ts'
-import { expiryTimestamp } from './renewal.ts'
+import { expiryDays } from './renewal.ts'
 
 export function formatAxisDateTime(unixSeconds: number, showMinutes = true): string {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -30,20 +30,18 @@ export function bytes(value = 0, decimal = true): string {
 }
 
 export function expiring(server: ProbeServer): boolean {
-  const expiry = expiryTimestamp(server)
-  if (expiry === undefined) return false
-  const days = (expiry - Date.now()) / 86400000
-  return days >= 0 && days <= 30
+  const days = expiryDays(server)
+  return days !== undefined && days >= 0 && days <= 30
 }
 
 export function expired(server: ProbeServer): boolean {
-  const expiry = expiryTimestamp(server)
-  return expiry !== undefined && expiry < Date.now()
+  const days = expiryDays(server)
+  return days !== undefined && days < 0
 }
 
 export function remainingDays(value?: string): string {
-  if (!value) return ''
-  const days = Math.ceil((new Date(`${value}T23:59:59`).getTime() - Date.now()) / 86400000)
+  const days = expiryDays({ expires_at: value })
+  if (days === undefined) return ''
   if (days < 0) return `已过期 ${Math.abs(days)} 天`
   if (days === 0) return '今天到期'
   return `剩余 ${days} 天`

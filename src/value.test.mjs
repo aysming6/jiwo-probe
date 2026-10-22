@@ -1,9 +1,32 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { computeMonthlyTrafficCost, computeRemainingValue } from './value.ts'
-import { CYCLE_MONTHS, expiryTimestamp } from './renewal.ts'
+import { CYCLE_MONTHS, expiryDateLabel, expiryDays, expiryTimestamp } from './renewal.ts'
+import { expired, expiring, remainingDays } from './server-format.ts'
 
 const base = { online: true, renewal_currency: 'CNY', traffic_limit: 2 * 1024 ** 4 }
+
+test('expiry matches controller UTC date arithmetic across timezones without shifting calendar labels', t => {
+  const originalTZ = process.env.TZ
+  t.after(() => { if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ })
+  for (const tz of ['UTC', 'America/Los_Angeles', 'Asia/Shanghai']) {
+    process.env.TZ = tz
+    const now = Date.parse('2026-10-22T18:00:00Z')
+    assert.equal(expiryDays({ expires_at: '2026-11-21' }, now), 30)
+    assert.equal(expiryDays({ expires_at: '2027-10-20' }, now), 363)
+    assert.equal(expiryDateLabel({ expires_at: '2026-11-21' }), '2026-11-21')
+    assert.equal(expiryDays({ expires_at: '2026-10-22' }, now), 0)
+    assert.equal(expiryDays({ expires_at: '2026-10-21' }, now), -1)
+    assert.equal(expiryDays({ expires_at: 'invalid' }, now), undefined)
+    assert.equal(expiryDays({ expires_at: '2020-01-01', renewal_cycle: 'permanent' }, now), undefined)
+  }
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-22T18:00:00Z'))
+  assert.equal(expired({ expires_at: '2026-10-22' }), false)
+  assert.equal(expiring({ expires_at: '2026-10-22' }), true)
+  assert.equal(remainingDays('2026-11-21'), '剩余 30 天')
+  assert.equal(remainingDays('invalid'), '')
+  assert.equal(expiryDays({ expires_at: '2026-10-23T18:00:00Z' }), 1)
+})
 
 test('monthly traffic cost normalizes monthly, quarterly, half-year and yearly renewal prices', () => {
   for (const [renewal_cycle, renewal_price] of [['month', 10], ['quarter', 30], ['half_year', 60], ['year', 120], ['two_year', 240], ['three_year', 360]]) {
@@ -14,12 +37,12 @@ test('monthly traffic cost normalizes monthly, quarterly, half-year and yearly r
 })
 
 test('multi-year remaining value uses the full paid term', t => {
-  t.mock.method(Date, 'now', () => Date.parse('2026-10-01T00:00:00'))
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-01T00:00:00Z'))
   for (const [renewal_cycle, renewal_price] of [['two_year', 730], ['three_year', 1095]]) {
     const result = computeRemainingValue({ ...base, renewal_cycle, renewal_price, expires_at: '2026-10-30' })
-    assert.equal(result.days, 30)
+    assert.equal(result.days, 29)
     assert.equal(result.daily, 1)
-    assert.equal(result.value, 30)
+    assert.equal(result.value, 29)
   }
 })
 

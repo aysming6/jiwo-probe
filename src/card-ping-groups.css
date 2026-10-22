@@ -26,6 +26,10 @@
 .card-ping-classic .card-ping-bars .is-warn { background: #f59e0b; }
 .card-ping-classic .card-ping-bars .is-bad { background: #ef4444; }
 .card-ping-classic .card-ping-head strong.warning { color: #d97706; }
+:is(.card-ping-classic,.card-ping-gm) .card-ping-head strong[data-level="good"] { color: #15803d; }
+:is(.card-ping-classic,.card-ping-gm) .card-ping-head strong[data-level="warn"] { color: #a16207; }
+:is(.card-ping-classic,.card-ping-gm) .card-ping-head strong[data-level="bad"] { color: #dc2626; }
+:is(.card-ping-classic,.card-ping-gm) .card-ping-head strong[data-level="none"] { color: var(--muted); }
 .card-ping-lumina { color: var(--text-secondary); }
 .card-ping-lumina .card-ping-head > span { color: var(--text-tertiary); }
 .card-ping-lumina .card-ping-metrics { gap: 22px; }

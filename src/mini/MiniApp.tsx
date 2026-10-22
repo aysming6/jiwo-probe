@@ -12,8 +12,8 @@ import { ConnectionHistory } from '../ConnectionHistory'
 import { ForwardOverview } from '../deferred'
 import { PasskeyLogin } from '../PasskeyLogin'
 import { Twemoji } from '../Twemoji'
-import { CYCLE_LABELS, isPermanent } from '../renewal'
-import { expiryTime, isExpiring, miniSummary, providerName, ratio, selectServers, validNumber, type MiniSort, type MiniStatus, type MiniView } from './mini-model'
+import { CYCLE_LABELS, expiryDateLabel, expiryDays as remainingDays, isPermanent } from '../renewal'
+import { isExpiring, miniSummary, providerName, ratio, selectServers, validNumber, type MiniSort, type MiniStatus, type MiniView } from './mini-model'
 import './mini.css'
 
 const viewLabels: Record<MiniView, string> = { compact: '卡片', detailed: '详细', list: '列表' }
@@ -24,10 +24,6 @@ function size(value?: number) { return validNumber(value) === undefined ? '—' 
 function uptime(value?: number) {
   if (validNumber(value) === undefined) return '运行时间未上报'
   return value! >= 86400 ? `已运行 ${Math.floor(value! / 86400)} 天` : `已运行 ${Math.floor(value! / 3600)} 小时`
-}
-function remainingDays(server: ProbeServer) {
-  const time = expiryTime(server)
-  return time === undefined ? undefined : Math.ceil((time - Date.now()) / 86400000)
 }
 function expiry(server: ProbeServer) {
   if (isPermanent(server)) return '永久买断'
@@ -66,7 +62,7 @@ function NodeCard({ server, index, view }: { server: ProbeServer; index: number;
   const flag = !hasLeadingFlag(name) ? regionFlag(server.region || server.region_country) : ''
   const detailed = view === 'detailed'
   const days = remainingDays(server)
-  const expiresAt = expiryTime(server)
+  const expiresAt = expiryDateLabel(server)
   const renewal = price(server)
   const speed = (value?: number) => validNumber(value) === undefined ? '—' : formatSpeed(value!)
   return <article className={`mini-node-card${server.online ? '' : ' is-offline'}`} aria-label={name}>
@@ -99,7 +95,7 @@ function NodeCard({ server, index, view }: { server: ProbeServer; index: number;
       </div>
       <div className={`mini-extra-item mini-extra-expiry${isExpiring(server) ? ' is-expiring' : ''}`}>
         <span className="mini-extra-label"><CalendarClock size={12} aria-hidden="true" />{days !== undefined && days < 0 ? '已过期' : '剩余天数'}</span>
-        <div className="mini-extra-content"><strong className="mini-extra-primary">{isPermanent(server) ? '永久' : days === undefined ? '—' : days === 0 ? '今天到期' : `${Math.abs(days)} 天`}</strong><small>{isPermanent(server) ? '一次性买断' : expiresAt === undefined ? '未设置到期日' : new Date(expiresAt).toLocaleDateString('zh-CN')}</small></div>
+        <div className="mini-extra-content"><strong className="mini-extra-primary">{isPermanent(server) ? '永久' : days === undefined ? '—' : days === 0 ? '今天到期' : `${Math.abs(days)} 天`}</strong><small>{isPermanent(server) ? '一次性买断' : expiresAt || '未设置到期日'}</small></div>
       </div>
       <div className="mini-extra-item mini-extra-price">
         <span className="mini-extra-label"><Wallet size={12} aria-hidden="true" />续费价格</span>

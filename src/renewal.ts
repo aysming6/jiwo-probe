@@ -13,6 +13,19 @@ export const isPermanent = (server: Pick<ProbeServer, 'renewal_cycle'>): boolean
 /** Permanent servers never expire, including when an old expiry date remains. */
 export function expiryTimestamp(server: Pick<ProbeServer, 'renewal_cycle' | 'expires_at'>): number | undefined {
   if (isPermanent(server) || !server.expires_at) return undefined
-  const time = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(server.expires_at) ? `${server.expires_at}T23:59:59` : server.expires_at)
+  // Match the controller: date-only values are UTC midnight, with no extra day.
+  const time = Date.parse(server.expires_at)
   return Number.isFinite(time) ? time : undefined
+}
+
+export function expiryDays(server: Pick<ProbeServer, 'renewal_cycle' | 'expires_at'>, now = Date.now()): number | undefined {
+  const time = expiryTimestamp(server)
+  return time === undefined ? undefined : Math.ceil((time - now) / 86400000) || 0
+}
+
+/** Keep calendar-only dates unchanged in browsers west of UTC. */
+export function expiryDateLabel(server: Pick<ProbeServer, 'renewal_cycle' | 'expires_at'>): string | undefined {
+  const time = expiryTimestamp(server)
+  if (time === undefined) return undefined
+  return /^\d{4}-\d{2}-\d{2}$/.test(server.expires_at!) ? server.expires_at : new Date(time).toLocaleDateString('sv-SE')
 }

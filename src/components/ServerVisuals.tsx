@@ -77,6 +77,8 @@ export const routeCarrierLabels = {
 export const goldRoutes = new Set(['CN2GIA', 'CTGGIA', '9929', 'CMIN2', '163PP'])
 
 export function displayReturnRoute(route: string): string {
+  if (!route.trim()) return '未检测'
+  if (/^unknown$/i.test(route.trim())) return '未识别'
   return route.toUpperCase().replace(/[^A-Z0-9]/g, '') === 'CMIN' ? 'CMI' : route
 }
 
@@ -93,7 +95,7 @@ export function ReturnRouteBadges({ routes, telecomPaidPeer, variant }: { routes
   const byCarrier = new Map(routes.map((route) => [route.carrier, route]))
   const items = (['telecom', 'unicom', 'mobile'] as const).map((carrier) => {
     const route = byCarrier.get(carrier)
-    const detectedRouteType = displayReturnRoute(route?.route_type || 'Unknown')
+    const detectedRouteType = displayReturnRoute(route?.route_type || '')
     const routeType = carrier === 'telecom' && telecomPaidPeer && detectedRouteType === '163' ? '163 PP' : detectedRouteType
     return { carrier, route, routeType, premium: goldRoutes.has(routeType.toUpperCase().replace(/[^A-Z0-9]/g, '')) }
   })

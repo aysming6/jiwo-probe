@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { aggregatePingGroup, parsePingGroupConfig, PING_GROUP_SCRIPT_VARS, pingScope, pingTargetOptions, resolvePingGroups } from './ping-groups.ts'
+import { aggregatePingGroup, controllerPingGroups, parsePingGroupConfig, PING_GROUP_SCRIPT_VARS, pingScope, pingStatusLevel, pingTargetOptions, resolvePingGroups } from './ping-groups.ts'
+
+test('latency and loss use independent green/yellow/red thresholds without treating missing history as healthy', () => {
+  for (const [value, tone] of [[0,'good'],[149.99,'good'],[150,'warn'],[249.99,'warn'],[250,'bad'],[1000,'bad']]) assert.equal(pingStatusLevel('latency',value),tone)
+  for (const [value, tone] of [[0,'good'],[0.01,'warn'],[4.99,'warn'],[5,'bad'],[100,'bad']]) assert.equal(pingStatusLevel('loss',value),tone)
+  for (const invalid of [undefined,NaN,Infinity,-1]) {
+    assert.equal(pingStatusLevel('latency',invalid),'none')
+    assert.equal(pingStatusLevel('loss',invalid),'none')
+  }
+  assert.equal(pingStatusLevel('latency',-1,100),'bad')
+  assert.equal(pingStatusLevel('latency',-1,-1),'none')
+  assert.equal(pingStatusLevel('latency',160,0),'warn')
+  assert.equal(pingStatusLevel('loss',0),'good')
+})
 
 const line = (key, label, isp, ms = 50, loss = 0) => ({ key, label, isp, current_ms: ms, loss_pct: loss, buckets: [{ ms, loss }] })
 const cn = line('sh-ct-v4', '上海电信', 'telecom')
@@ -11,6 +24,23 @@ const defaultBackups = ['intl-web-cloudflare', 'intl-web-google', 'intl-tg-dc5']
 const all = pingTargetOptions([cn, cf, google])
 const resolve = (defaults, backup = 'Cloudflare，Google', options = all, count = 3, overrides) => resolvePingGroups(options, parsePingGroupConfig({ count, defaultTargets: defaults, intlTargets: backup }), overrides)
 const keys = groups => groups.map(group => group.target?.key)
+
+test('controller three-carrier keys win in telecom, unicom, mobile order and missing carriers never become foreign backups', () => {
+  const targets = [
+    { isp: 'mobile', key: 'sd-cm-v4', label: '山东移动' },
+    { isp: 'telecom', key: 'sd-ct-v4', label: '山东电信' },
+    { isp: 'unicom', key: 'sd-cu-v4', label: '山东联通' },
+  ]
+  const fallback = parsePingGroupConfig({ count: 1, defaultTargets: '平均延迟' })
+  const config = controllerPingGroups({ enabled: true, targets }, fallback)
+  assert.deepEqual(config.defaultTargets, ['sd-ct-v4', 'sd-cu-v4', 'sd-cm-v4'])
+  const options = pingTargetOptions([cf, ...targets.map(t => line(t.key, t.label, t.isp))])
+  assert.deepEqual(keys(resolvePingGroups(options, config)), config.defaultTargets)
+  assert.deepEqual(keys(resolvePingGroups(options.filter(t => t.key !== 'sd-cu-v4'), config)), ['sd-ct-v4', undefined, 'sd-cm-v4'])
+  const changed = targets.map(t => t.isp === 'telecom' ? { ...t, key: 'sh-ct-v4' } : t)
+  assert.equal(controllerPingGroups({ enabled: true, targets: changed }, fallback).defaultTargets[0], 'sh-ct-v4')
+  for (const tri of [undefined, { enabled: false, targets }, { enabled: true, targets: [] }]) assert.equal(controllerPingGroups(tri, fallback), fallback)
+})
 
 test('fresh installation uses the embedded variables without CF setup', () => {
   assert.deepEqual(PING_GROUP_SCRIPT_VARS, {

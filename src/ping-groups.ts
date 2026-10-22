@@ -1,9 +1,26 @@
-import type { ProbeBucket, ProbePingSeries } from './types'
+import type { ProbeBucket, ProbePayload, ProbePingSeries } from './types'
+
+export function pingStatusLevel(kind: 'latency' | 'loss', value?: number, loss?: number): 'good' | 'warn' | 'bad' | 'none' {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'none'
+  if (value < 0) return kind === 'latency' && Number.isFinite(loss) && loss! >= 100 ? 'bad' : 'none'
+  return kind === 'latency'
+    ? value < 150 ? 'good' : value < 250 ? 'warn' : 'bad'
+    : value === 0 ? 'good' : value < 5 ? 'warn' : 'bad'
+}
 
 export interface PingGroupConfig {
   count: 1 | 2 | 3
   defaultTargets: string[]
   intlTargets: string[]
+  strictTargets?: boolean
+}
+
+/** Follow the controller's selected three carriers, rather than averaging them. */
+export function controllerPingGroups(tri: ProbePayload['tri_isp'], fallback: PingGroupConfig): PingGroupConfig {
+  if (!tri?.enabled || !Array.isArray(tri.targets)) return fallback
+  const keys = ['telecom', 'unicom', 'mobile'].map(isp => tri.targets.find(target => target.isp === isp)?.key?.trim())
+  if (!keys.every((key): key is string => !!key) || new Set(keys).size !== 3) return fallback
+  return { count: 3, defaultTargets: keys, intlTargets: [], strictTargets: true }
 }
 
 /**
@@ -148,7 +165,7 @@ export function resolvePingGroups(options: PingTargetOption[], config: PingGroup
       used.add(target.key)
     }
   }
-  const backups = (config.intlTargets.length ? config.intlTargets : PING_GROUP_DEFAULTS.intlTargets)
+  const backups = (config.strictTargets ? [] : config.intlTargets.length ? config.intlTargets : PING_GROUP_DEFAULTS.intlTargets)
     .flatMap(value => {
       const item = matchTarget(value, options)
       return item?.scope === 'intl' ? [item] : []

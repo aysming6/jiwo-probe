@@ -7,6 +7,7 @@ import { connectionCount } from '../unlocks'
 import { connectionTrendRows, formatConnectionAverage, pingTrendRows, systemTrendRows, trendValue, type SystemSeries, type TrendRow } from './mini-trends'
 import { useProbeRange } from '../use-probe-range'
 import { probeBucketLabel, probeRangeBucketSec, type ProbeRange, type ProbeRangeOption } from '../probe-ranges'
+import { useProbe } from '../use-probe'
 
 const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#f97316']
 type SeriesPayload = { success: boolean; generated_at?: number; bucket_sec?: number; series?: ProbePingSeries; all_series?: ProbePingSeries[] }
@@ -56,14 +57,18 @@ function ChartCard({ title, value, children, className = '' }: { title: string; 
   return <section className={`mini-trend-card ${className}`} aria-label={title}><header><h3>{title}</h3>{value && <span>{value}</span>}</header>{children}</section>
 }
 export function MiniLatencyTrends({ server, index }: { server: ProbeServer; index: number }) {
+  const { pingGroups } = useProbe()
   const { range, setRange, options } = useProbeRange()
   const [mode, setMode] = useState<'latency' | 'loss'>('latency')
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const history = useHistory<SeriesPayload>(index, range, 'ping')
-  const series = useMemo(() => history.data ? [
-    ...(history.data.series ? [{ ...history.data.series, key: '__avg__', label: '平均' }] : []),
-    ...(history.data.all_series || []),
-  ] : server.ping || [], [history.data, server.ping])
+  const series = useMemo(() => {
+    const lines = history.data?.all_series || server.ping || []
+    if (pingGroups.strictTargets) return pingGroups.defaultTargets.flatMap(key => lines.filter(line => line.key === key))
+    return history.data ? [
+      ...(history.data.series ? [{ ...history.data.series, key: '__avg__', label: '平均' }] : []), ...lines,
+    ] : lines
+  }, [history.data, server.ping, pingGroups])
   const targets = series.map((line, slot) => ({ key: `line${slot}`, id: line.key || line.label, label: line.label, color: line.key === '__avg__' ? 'var(--mini-text)' : colors[slot % colors.length], series: line }))
   const visible = targets.filter(line => !hidden.has(line.id))
   const bucketSec = history.data?.bucket_sec || probeRangeBucketSec(range)

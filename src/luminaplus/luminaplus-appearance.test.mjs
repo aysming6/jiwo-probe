@@ -1,10 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 import { LUMINAPLUS_COLOR_KEY, LUMINAPLUS_MODE_KEY, LUMINAPLUS_PALETTE_KEY } from './luminaplus-color.ts'
 
-const bundle = await build({ entryPoints: [new URL('../use-probe.ts', import.meta.url).pathname], bundle: true, write: false, platform: 'node', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } })
+const bundle = await build({ entryPoints: [fileURLToPath(new URL('../use-probe.ts', import.meta.url))], bundle: true, write: false, platform: 'node', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } })
 const { applyAppearance, followControllerLuminaPlusAppearance, getActiveTheme, setLuminaPlusAppearance, setTheme } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`)
+
+test('return-route badges distinguish untested routes from an inconclusive completed detection', async () => {
+  const result = await build({ entryPoints: [fileURLToPath(new URL('../components/ServerVisuals.tsx', import.meta.url))], bundle: true, write: false, platform: 'node', format: 'esm', define: { 'process.env.NODE_ENV': '"production"' } })
+  const { displayReturnRoute, ReturnRouteBadges } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`)
+  assert.equal(displayReturnRoute(''), '未检测')
+  assert.equal(displayReturnRoute('Unknown'), '未识别')
+  assert.equal(displayReturnRoute('CMIN'), 'CMI')
+  const chips = ReturnRouteBadges({ routes: [{ carrier: 'telecom', route_type: 'CN2 GIA' }], variant: 'lumina' }).props.children
+  assert.deepEqual(chips.map(chip => chip.props.children[1].props.children), ['CN2 GIA', '未检测', '未检测'])
+})
 
 test('appearance applies Paper idempotently, persists manual palettes and removes its class on other themes', () => {
   const previousDocument = globalThis.document, previousStorage = globalThis.localStorage

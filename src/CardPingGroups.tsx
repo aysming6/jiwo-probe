@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, RotateCcw, Unplug } from 'lucide-react'
 import type { ProbeBucket, ProbePingSeries } from './types'
 import { useProbe } from './use-probe'
-import { pingTargetOptions, resolvePingGroups } from './ping-groups'
+import { pingStatusLevel, pingTargetOptions, resolvePingGroups } from './ping-groups'
 import { LuminaHealthBars, luminaHeatColor } from './components/LuminaHealthBars'
 import { TrendDialog } from './deferred'
 import './card-ping-groups.css'
@@ -17,15 +17,14 @@ function readSelections(key: string): Array<string | null> {
   } catch { return [] }
 }
 
-function barLevel(variant: Variant, kind: Mode, value: number): string {
-  if (!Number.isFinite(value) || value < 0) return variant === 'emerald' ? 'empty' : 'none'
+function barLevel(variant: Variant, kind: Mode, value: number, loss?: number): string {
   if (variant === 'emerald') {
+    if (!Number.isFinite(value) || value < 0) return 'empty'
     return kind === 'latency'
       ? value > 240 ? 'bad' : value > 180 ? 'warn' : value > 60 ? 'fair' : 'good'
       : value > 9 ? 'bad' : value > 6 ? 'warn' : value > 1 ? 'fair' : 'good'
   }
-  if (kind === 'loss') return value >= 20 ? 'bad' : value > 0 ? 'warn' : 'good'
-  return variant === 'gm' ? value >= 200 ? 'bad' : value >= 100 ? 'warn' : 'good' : value >= 200 ? 'warn' : 'good'
+  return pingStatusLevel(kind, value, loss)
 }
 
 function luminaValueColor(kind: Mode, value: number): string {
@@ -43,7 +42,7 @@ function Bars({ variant, kind, buckets }: { variant: Variant; kind: Mode; bucket
   return <span className="card-ping-bars" aria-hidden="true">
     {padded.map((bucket, index) => {
       const value = kind === 'latency' ? bucket.ms : bucket.loss
-      return <i key={index} className={`is-${barLevel(variant, kind, value)}`} title={value < 0 ? '无数据' : kind === 'latency' ? `${value.toFixed(0)} ms` : `${value.toFixed(1)}%`} />
+      return <i key={index} className={`is-${barLevel(variant, kind, value, bucket.loss)}`} title={value < 0 ? kind === 'latency' && bucket.loss >= 100 ? '超时（100% 丢包）' : '无数据' : kind === 'latency' ? `${value.toFixed(0)} ms` : `${value.toFixed(1)}%`} />
     })}
   </span>
 }
@@ -89,7 +88,7 @@ export function CardPingGroups({ ping = [], serverIndex, serverName, variant, av
             const text = !current ? '—' : !valid ? kind === 'latency' ? '超时' : '—' : kind === 'latency' ? `${value.toFixed(0)} ms` : `${value.toFixed(1)}%`
             const label = kind === 'latency' ? '延迟' : '丢包率'
             const openTrend = () => group.target && setTrend({ key: targetKey, label: group.target.label, mode: kind })
-            return <div key={kind} className={`card-ping-metric${!current ? ' is-unavailable' : ''}`} onClick={openTrend}>
+            return <div key={kind} className={`card-ping-metric${!current ? ' is-unavailable' : ''}`} data-kind={kind} onClick={openTrend}>
               <div className="card-ping-head">
                 {kind === 'latency' ? averageOnly ? <span>平均延迟</span> : <span className="card-ping-selector">
                   <select aria-label={`${name} 第 ${index + 1} 组测试目标`} value={targetKey}
@@ -111,9 +110,10 @@ export function CardPingGroups({ ping = [], serverIndex, serverName, variant, av
                     : <Unplug size={11} />}
                   丢包率
                 </span>}
-                <strong className={kind === 'loss' && valid && value > 0 ? 'warning' : undefined} style={variant === 'lumina' && valid ? { color: luminaValueColor(kind, value) } : undefined}>{text}</strong>
+                <strong data-level={pingStatusLevel(kind, value, current?.loss_pct)} className={variant === 'emerald' && kind === 'loss' && valid && value > 0 ? 'warning' : undefined} style={variant === 'lumina' && valid ? { color: luminaValueColor(kind, value) } : undefined}>{text}</strong>
               </div>
               <button type="button" className="card-ping-trend" disabled={!current}
+                title={kind === 'latency' ? '延迟：低于 150ms 绿色，150–249ms 黄色，250ms 起或超时红色；无数据灰色' : '丢包：0% 绿色，大于 0% 且低于 5% 黄色，5% 起红色；无数据灰色'}
                 aria-label={`${name} 第 ${index + 1} 组 ${group.target?.label || '未配置'} ${label}趋势`}
                 onClick={event => { event.stopPropagation(); openTrend() }}>
                 <Bars variant={variant} kind={kind} buckets={current?.buckets || []} />

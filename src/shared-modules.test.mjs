@@ -54,15 +54,15 @@ test('健康评分保持离线、资源压力、延迟丢包与额度扣分边�
   assert.equal(serverHealth({ online: true, cpu_pct: 100, mem_used: 100, mem_total: 100, disk_used: 100, disk_total: 100, ping: [{ current_ms: 300, loss_pct: 100 }], traffic_used: 100, traffic_limit: 100 }).score, 0)
 })
 
-test('到期与剩余天数保留原时间边界，永久套餐不扣到期分', () => {
+test('到期与剩余天数使用主控 UTC 日期边界，永久套餐不扣到期分', () => {
   const now = Date.now
-  Date.now = () => new Date('2026-10-02T12:00:00').getTime()
+  Date.now = () => new Date('2026-10-02T12:00:00Z').getTime()
   try {
     assert.equal(expired({ expires_at: '2026-10-01' }), true)
     assert.equal(expiring({ expires_at: '2026-10-12' }), true)
     assert.equal(expiring({}), false)
     assert.equal(remainingDays(), '')
-    assert.equal(remainingDays('2026-10-03'), '剩余 2 天')
+    assert.equal(remainingDays('2026-10-03'), '剩余 1 天')
     assert.equal(serverHealth({ online: true, expires_at: '2026-10-01' }).score, 80)
     assert.equal(serverHealth({ online: true, expires_at: '2026-10-10' }).score, 92)
     assert.equal(serverHealth({ online: true, expires_at: '2026-10-01', renewal_cycle: 'permanent' }).score, 100)

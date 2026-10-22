@@ -125,6 +125,10 @@ export interface ProbeReturnRoute {
 
 export interface ProbePayload {
   enabled: boolean
+  tri_isp?: {
+    enabled: boolean
+    targets: Array<{ isp: string; key: string; label: string }>
+  }
   block_login?: boolean
   show_name?: boolean
   show_globe?: boolean

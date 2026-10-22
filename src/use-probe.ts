@@ -1,7 +1,7 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProbeAppearance, ProbeBackgroundAppearance, ProbePayload, ProbeServer, ThemeName } from './types'
-import { DEFAULT_PING_GROUP_CONFIG, parsePingGroupConfig, type PingGroupConfig } from './ping-groups'
+import { controllerPingGroups, DEFAULT_PING_GROUP_CONFIG, parsePingGroupConfig, type PingGroupConfig } from './ping-groups'
 import { DEFAULT_NETWORK_SPEED_UNIT, parseNetworkSpeedUnit, type NetworkSpeedUnit } from './network-speed'
 import { canonicalThemeOverride, parseThemeName } from './theme-name'
 import { isLuminaPlusModeSetting, LUMINAPLUS_COLOR_KEY, LUMINAPLUS_MODE_KEY, LUMINAPLUS_PALETTE_KEY, resolveLuminaPlusAppearance, type LuminaPlusModeSetting, type LuminaPlusPalette } from './luminaplus/luminaplus-color'
@@ -581,7 +581,7 @@ function useProbeConnection(): ProbeState {
     }
   }, [])
 
-  return { data, error, updatedAt, pingGroups, networkSpeedUnit, connectionChartEnabled }
+  return { data, error, updatedAt, pingGroups: controllerPingGroups(data?.tri_isp, pingGroups), networkSpeedUnit, connectionChartEnabled }
 }
 
 // 全站只在 Provider 内建立一套 HTTP/WS 连接。各主题调用 useProbe() 时只读取

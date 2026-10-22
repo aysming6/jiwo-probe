@@ -16,7 +16,7 @@ import { dailyTrafficRows, hasMoreDailyTraffic, hasTrafficPeriod, trafficRuleLab
 import { BlackGoldGlobe, type PremiumProbeRegion } from './BlackGoldGlobe'
 import { useProbeRange } from './use-probe-range'
 import { probeBucketLabel } from './probe-ranges'
-import { CYCLE_LABELS, CYCLE_MONTHS, expiryTimestamp, isPermanent } from './renewal'
+import { CYCLE_LABELS, CYCLE_MONTHS, expiryDays, isPermanent } from './renewal'
 import './premium-probe.css'
 import { serverHealth, averageLatency, percentage, resourcePercentage } from './server-health'
 import { availabilityCells, availabilityPct, chainLiveSpeed, formatAvailability, formatJitter, FORWARD_TRAFFIC_NOTE, FORWARD_TRAFFIC_SETTLE_MINUTES } from './forward-model'
@@ -370,13 +370,10 @@ function trafficQuotaRows(servers: ProbeServer[]) {
 }
 
 function renewalTimelineRows(servers: ProbeServer[]) {
-  const now = new Date()
-  now.setHours(0, 0, 0, 0)
   return servers
     .map((server, index) => {
-      if (!server.expires_at || expiryTimestamp(server) === undefined) return undefined
-      const expiresAt = new Date(`${server.expires_at}T00:00:00`)
-      const days = Math.ceil((expiresAt.getTime() - now.getTime()) / 86400000)
+      const days = expiryDays(server)
+      if (days === undefined || !server.expires_at) return undefined
       const price =
         server.renewal_price_cny ??
         (server.renewal_currency === 'CNY' ? server.renewal_price : undefined)

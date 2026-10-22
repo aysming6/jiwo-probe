@@ -14,6 +14,7 @@ import { Twemoji } from '../Twemoji'
 import { averageLatency, ratio, validNumber } from './mini-model'
 import { MiniLatencyTrends, MiniSystemTrends } from './MiniTrends'
 import { CYCLE_LABELS as cycles, isPermanent } from '../renewal'
+import { displayReturnRoute } from '../components/ServerVisuals'
 
 const tabs = [
   { key: 'overview', label: '概览' }, { key: 'latency', label: '延迟' },
@@ -120,7 +121,7 @@ export default function MiniServerDetail({ server, index, onClose, showHealthSco
           <p className="mini-detail-description">三网回程 · 最近一次检测结果</p>
           <div className="mini-detail-routes">{(['telecom', 'unicom', 'mobile'] as const).map(carrier => {
             const route = server.return_routes?.find(item => item.carrier === carrier)
-            const detected = route?.route_type?.replace(/^CMIN$/i, 'CMI') || '未检测'
+            const detected = displayReturnRoute(route?.route_type || '')
             const routeType = carrier === 'telecom' && server.telecom_paid_peer && detected === '163' ? '163 PP' : detected
             const time = route?.tested_at ? Date.parse(route.tested_at) : NaN
             return <section key={carrier}><span>{({ telecom: '中国电信', unicom: '中国联通', mobile: '中国移动' })[carrier]}</span><strong>{routeType}</strong><small>{route?.region || '地区未上报'}</small><small>{Number.isFinite(time) ? new Date(time).toLocaleString('zh-CN', { hour12: false }) : '检测时间未上报'}</small></section>

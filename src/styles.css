@@ -4835,3 +4835,37 @@ footer a:hover {
   .probe-license-bar { gap: 8px; }
   .probe-license-toggle > svg { display: none; }
 }
+
+/* Keep mobile search visible and give navigation controls a full touch target. */
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .topbar > div { flex-basis: 100%; }
+  .topbar nav {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .topbar button,
+  .server-detail-header > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .filters {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .filters > button,
+  .filters .region-trigger { min-height: 44px; }
+  .server-search {
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 44px;
+  }
+  .server-search input {
+    min-width: 0;
+    font-size: 16px;
+  }
+}
