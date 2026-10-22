@@ -5,7 +5,7 @@ export function pingStatusLevel(kind: 'latency' | 'loss', value?: number, loss?:
   if (value < 0) return kind === 'latency' && Number.isFinite(loss) && loss! >= 100 ? 'bad' : 'none'
   return kind === 'latency'
     ? value < 160 ? 'good' : value < 200 ? 'warn' : 'bad'
-    : value < 10 ? 'good' : value < 25 ? 'warn' : 'bad'
+    : value === 0 ? 'good' : value < 25 ? 'warn' : 'bad'
 }
 
 export interface PingGroupConfig {

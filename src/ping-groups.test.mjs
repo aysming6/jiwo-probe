@@ -4,7 +4,7 @@ import { aggregatePingGroup, controllerPingGroups, parsePingGroupConfig, PING_GR
 
 test('latency and loss use independent green/yellow/red thresholds without treating missing history as healthy', () => {
   for (const [value, tone] of [[0,'good'],[159.99,'good'],[160,'warn'],[199.99,'warn'],[200,'bad'],[1000,'bad']]) assert.equal(pingStatusLevel('latency',value),tone)
-  for (const [value, tone] of [[0,'good'],[9.99,'good'],[10,'warn'],[24.99,'warn'],[25,'bad'],[100,'bad']]) assert.equal(pingStatusLevel('loss',value),tone)
+  for (const [value, tone] of [[0,'good'],[0.01,'warn'],[10,'warn'],[24.99,'warn'],[25,'bad'],[100,'bad']]) assert.equal(pingStatusLevel('loss',value),tone)
   for (const invalid of [undefined,NaN,Infinity,-1]) {
     assert.equal(pingStatusLevel('latency',invalid),'none')
     assert.equal(pingStatusLevel('loss',invalid),'none')
