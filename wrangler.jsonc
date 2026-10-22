@@ -6,6 +6,7 @@
   "workers_dev": true,
   "preview_urls": false,
   "keep_vars": true,
+  "routes": [{ "pattern": "tz.enmico.com", "custom_domain": true }],
   "durable_objects": {
     "bindings": [
       {
