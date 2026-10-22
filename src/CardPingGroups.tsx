@@ -113,7 +113,7 @@ export function CardPingGroups({ ping = [], serverIndex, serverName, variant, av
                 <strong data-level={pingStatusLevel(kind, value, current?.loss_pct)} className={variant === 'emerald' && kind === 'loss' && valid && value > 0 ? 'warning' : undefined} style={variant === 'lumina' && valid ? { color: luminaValueColor(kind, value) } : undefined}>{text}</strong>
               </div>
               <button type="button" className="card-ping-trend" disabled={!current}
-                title={kind === 'latency' ? '延迟：低于 150ms 绿色，150–249ms 黄色，250ms 起或超时红色；无数据灰色' : '丢包：0% 绿色，大于 0% 且低于 5% 黄色，5% 起红色；无数据灰色'}
+                title={kind === 'latency' ? '延迟：低于 160ms 绿色，160–199ms 黄色，200ms 起或超时红色；无数据灰色' : '丢包：低于 10% 绿色，10% 至低于 25% 黄色，25% 起红色；无数据灰色'}
                 aria-label={`${name} 第 ${index + 1} 组 ${group.target?.label || '未配置'} ${label}趋势`}
                 onClick={event => { event.stopPropagation(); openTrend() }}>
                 <Bars variant={variant} kind={kind} buckets={current?.buckets || []} />
