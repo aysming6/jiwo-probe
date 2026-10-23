@@ -59,12 +59,15 @@ test('到期与剩余天数使用主控 UTC 日期边界，永久套餐不扣到
   Date.now = () => new Date('2026-10-02T12:00:00Z').getTime()
   try {
     assert.equal(expired({ expires_at: '2026-10-01' }), true)
-    assert.equal(expiring({ expires_at: '2026-10-12' }), true)
+    assert.equal(expiring({ expires_at: '2026-10-12' }), false)
+    assert.equal(expiring({ expires_at: '2026-10-07' }), true)
+    assert.equal(expiring({ expires_at: '2026-10-08' }), false)
     assert.equal(expiring({}), false)
     assert.equal(remainingDays(), '')
     assert.equal(remainingDays('2026-10-03'), '剩余 1 天')
     assert.equal(serverHealth({ online: true, expires_at: '2026-10-01' }).score, 80)
-    assert.equal(serverHealth({ online: true, expires_at: '2026-10-10' }).score, 92)
+    assert.equal(serverHealth({ online: true, expires_at: '2026-10-10' }).score, 100)
+    assert.equal(serverHealth({ online: true, expires_at: '2026-10-07' }).score, 92)
     assert.equal(serverHealth({ online: true, expires_at: '2026-10-01', renewal_cycle: 'permanent' }).score, 100)
   } finally { Date.now = now }
 })

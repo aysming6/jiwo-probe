@@ -469,7 +469,7 @@ function RenewalTimeline({
               const tone =
                 item.days < 0
                   ? 'is-expired'
-                  : item.days <= 30
+                  : item.days <= 5
                     ? 'is-due'
                     : undefined
               const inner = (
@@ -827,7 +827,7 @@ function SmartSummary({ servers }: { servers: ProbeServer[] }) {
     (server) => serverHealth(server).score < 75
   ).length
   const due = renewalTimelineRows(servers).filter(
-    (item) => item.days >= 0 && item.days <= 14
+    (item) => item.days >= 0 && item.days <= 5
   ).length
   const lossy = servers
     .map((server) => ({

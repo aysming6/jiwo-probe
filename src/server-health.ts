@@ -92,7 +92,7 @@ export function serverHealth(server: ProbeServer): HealthResult {
     if (days < 0) {
       score -= 20
       issues.push('服务器已到期')
-    } else if (days <= 14) {
+    } else if (days <= 5) {
       score -= 8
       issues.push('服务器即将到期')
     }

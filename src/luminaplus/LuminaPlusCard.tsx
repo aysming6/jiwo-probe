@@ -16,7 +16,7 @@ import { filledSegments, loadMetric, quotaMetric, resetDays, speedTone, combined
 import { SpeedPulse } from './SpeedPulse'
 import { LuminaPlusTrafficPopover } from './LuminaPlusTrafficPopover'
 import { trafficWeek } from './luminaplus-traffic'
-import { CYCLE_LABELS, expiryDateLabel, expiryDays, isPermanent } from '../renewal'
+import { CYCLE_LABELS, EXPIRING_DAYS, expiryDateLabel, expiryDays, isPermanent } from '../renewal'
 import { SystemTrendChart, TrafficDialog } from '../deferred'
 import { ProbeHistoryDialog } from '../components/ProbeHistoryDialog'
 
@@ -144,10 +144,10 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
     <ConnectionHistory server={server} serverIndex={index} />
     <CardPingGroups ping={server.ping} serverIndex={index} serverName={server.name} variant="classic" averageOnly={view === 'mini'} />
     {server.return_routes && <div className="lp-routes" role="group" aria-label="电信、联通、移动回程"><ReturnRouteBadges routes={server.return_routes} telecomPaidPeer={server.telecom_paid_peer} variant="lumina" /></div>}
-    {view === 'mini' ? <footer className="lp-mini-footer"><span title="到期日期"><CalendarDays size={12} /><time dateTime={expiryDate}>{permanent ? '永久' : expiryDate || '未设置到期'}</time></span><strong title={`剩余天数 · 已运行 ${age}`} className={days !== undefined && days <= 30 ? 'is-warm' : ''}>{remainingDays}</strong></footer> : view === 'large' && <div className="lp-lifetime" role="group" aria-label="运行时间与到期信息">
+    {view === 'mini' ? <footer className="lp-mini-footer"><span title="到期日期"><CalendarDays size={12} /><time dateTime={expiryDate}>{permanent ? '永久' : expiryDate || '未设置到期'}</time></span><strong title={`剩余天数 · 已运行 ${age}`} className={days !== undefined && days <= EXPIRING_DAYS ? 'is-warm' : ''}>{remainingDays}</strong></footer> : view === 'large' && <div className="lp-lifetime" role="group" aria-label="运行时间与到期信息">
       <div><span><RefreshCw size={15} />运行时间</span><strong className="lp-age">{age}</strong></div>
       <div><span><CalendarDays size={15} />到期日期</span><time dateTime={expiryDate}>{permanent ? '永久' : expiryDate || '未设置'}</time></div>
-      <div><span><Hourglass size={15} />剩余天数</span><strong className={days !== undefined && days <= 30 ? 'is-warm' : ''}>{remainingDays}</strong></div>
+      <div><span><Hourglass size={15} />剩余天数</span><strong className={days !== undefined && days <= EXPIRING_DAYS ? 'is-warm' : ''}>{remainingDays}</strong></div>
     </div>}
     {trendDialog}
   </article>

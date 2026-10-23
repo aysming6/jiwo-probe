@@ -1,5 +1,5 @@
 import type { ProbeServer } from '../types'
-import { expiryTimestamp } from '../renewal.ts'
+import { EXPIRING_DAYS, expiryTimestamp } from '../renewal.ts'
 
 export type MiniStatus = 'all' | 'online' | 'offline' | 'expiring'
 export type MiniSort = 'default' | 'name' | 'cpu' | 'memory' | 'traffic' | 'latency' | 'expiry'
@@ -28,7 +28,7 @@ export function expiryTime(server: ProbeServer): number | undefined {
 export function isExpiring(server: ProbeServer, now = Date.now()): boolean {
   const expiry = expiryTime(server)
   // 临期包含已过期节点，与待续费的意图一致。
-  return expiry !== undefined && expiry <= now + 30 * 86400000
+  return expiry !== undefined && expiry <= now + EXPIRING_DAYS * 86400000
 }
 
 export function providerName(server: ProbeServer): string {

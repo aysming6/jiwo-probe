@@ -1,5 +1,7 @@
 import type { ProbeServer } from './types'
 
+export const EXPIRING_DAYS = 5
+
 export const CYCLE_LABELS = {
   month: '月', quarter: '季', half_year: '半年', year: '年',
   two_year: '两年', three_year: '三年', permanent: '永久',

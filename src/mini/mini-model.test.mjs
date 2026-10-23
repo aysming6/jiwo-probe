@@ -44,6 +44,16 @@ test('Mini 临期包含逾期，但不包含未知日期', () => {
   assert.equal(isExpiring({ expires_at: '2027-01-01' }, now), false)
   assert.equal(expiryTime(servers[3]), undefined)
 })
+
+test('临期仅在剩余五天内触发，保留现有逾期处理', () => {
+  const now = Date.parse('2026-10-22T00:00:00Z')
+  assert.equal(isExpiring({ expires_at: '2026-10-27' }, now), true)
+  assert.equal(isExpiring({ expires_at: '2026-10-27T00:00:00.001Z' }, now), false)
+  assert.equal(isExpiring({ expires_at: '2026-10-28' }, now), false)
+  assert.equal(isExpiring({ expires_at: '2026-10-22' }, now), true)
+  assert.equal(isExpiring({ expires_at: '2026-10-21' }, now), true)
+  assert.equal(isExpiring({ expires_at: '2026-10-21', renewal_cycle: 'permanent' }, now), false)
+})
 test('Mini 概览汇总有效数据，空快照不伪造速度，离线不参与延迟均值', () => {
   const result = miniSummary(servers)
   assert.equal(result.online, 3)

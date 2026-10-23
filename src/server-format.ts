@@ -1,5 +1,5 @@
 import type { ProbeBucket, ProbePingSeries, ProbeServer } from './types.ts'
-import { expiryDays } from './renewal.ts'
+import { EXPIRING_DAYS, expiryDays } from './renewal.ts'
 
 export function formatAxisDateTime(unixSeconds: number, showMinutes = true): string {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -31,7 +31,7 @@ export function bytes(value = 0, decimal = true): string {
 
 export function expiring(server: ProbeServer): boolean {
   const days = expiryDays(server)
-  return days !== undefined && days >= 0 && days <= 30
+  return days !== undefined && days >= 0 && days <= EXPIRING_DAYS
 }
 
 export function expired(server: ProbeServer): boolean {
