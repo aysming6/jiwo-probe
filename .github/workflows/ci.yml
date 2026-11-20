@@ -28,5 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          WRANGLER_CI_OVERRIDE_NAME: jiwo-probe
       - run: npm run build
       - run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"
