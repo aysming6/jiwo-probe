@@ -1,3 +1,4 @@
+import { ProviderLogo } from './ProviderLogo'
 import { useNetworkSpeed } from './use-network-speed'
 import { ConnectionCounts, UnlockDetails } from './ServerCapabilities'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -14,8 +15,10 @@ import { HorizontalChart } from './charts/HorizontalChart'
 import { serverHealth } from './server-health'
 import { computeMonthlyTrafficCost, computeRemainingValue, formatMoney } from './value'
 import { CYCLE_LABELS as cycleLabel, isPermanent } from './renewal'
+import { isOneTimeTraffic, trafficPeriodText } from './traffic-display'
 import { useProbeRange } from './use-probe-range'
 import { probeRangeBucketSec } from './probe-ranges'
+import { PING_IPV6_AVERAGE, aggregatePingGroup, historyPingSeries, inPingChartGroup, isIpv6Ping, type PingChartGroup } from './ping-groups'
 
 function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400)
@@ -56,12 +59,13 @@ function RemainingValueBlock({ server }: { server: ProbeServer }) {
 
 function MonthlyTrafficCostItem({ server }: { server: ProbeServer }) {
   if (isPermanent(server)) return <span className="detail-traffic-cost"><Database size={13} />每月每 TB 费用<strong>不适用（永久买断）</strong></span>
+  if (isOneTimeTraffic(server)) return <span className="detail-traffic-cost"><Database size={13} />每月每 TB 费用<strong>不适用（一次性流量）</strong></span>
   const cost = computeMonthlyTrafficCost(server)
   const value = !cost ? '无法计算' : cost.perTB > 0 && cost.perTB < 0.01
     ? `< ${formatMoney(0.01, cost.currency, cost.isCny, true)} / TB / 月`
     : `${formatMoney(cost.perTB, cost.currency, cost.isCny, true)} / TB / 月`
   return (
-    <span className="detail-traffic-cost" title="按配置额度为每月额度估算：续费价格先按 1 / 3 / 6 / 12 / 24 / 36 个月折算，再除以计费额度（1 TB = 1024 GB）。单向或取最大值计费不自动翻倍。非月度流量套餐不适用；不按实际已用流量计算。">
+    <span className="detail-traffic-cost" title="按配置额度估算：续费价格先按 1 / 3 / 6 / 12 / 24 / 36 / 60 个月折算成月费，计费额度按流量重置周期（一个月、三个月、半年、一年）摊成每月额度，再相除（1 TB = 1024 GB）。单向或取最大值计费不自动翻倍。一次性流量不适用；不按实际已用流量计算。">
       <Database size={13} />
       每月每 TB 费用
       <strong>{value}{cost && `（${cost.currency}）`}</strong>
@@ -75,7 +79,7 @@ const colors = ['#8b5cf6', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#ec4899'
 
 function PingTrendChart({ serverIndex, initial, targetKey, mode }: { serverIndex: number; initial: ProbePingSeries[]; targetKey: string; mode: 'latency' | 'loss' }) {
   const { range, setRange, options: RANGES } = useProbeRange()
-  const [group, setGroup] = useState<'all' | 'cn' | 'idc'>('all')
+  const [group, setGroup] = useState<PingChartGroup>('all')
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [series, setSeries] = useState<ProbePingSeries[]>(initial)
   const [loading, setLoading] = useState(false)
@@ -87,13 +91,11 @@ function PingTrendChart({ serverIndex, initial, targetKey, mode }: { serverIndex
     bucketSec: 300,
   })
 
-  const isCnLabel = (label: string) => /电信|联通|移动/.test(label)
-  const groupSeries = useMemo(() => {
-    const list = series.map((item, index) => ({ item, index }))
-    if (group === 'all') return list
-    const cn = group === 'cn'
-    return list.filter(({ item }) => item.key !== '__avg__' && isCnLabel(item.label) === cn)
-  }, [series, group])
+  const hasIpv6 = series.some(isIpv6Ping)
+  const groupSeries = useMemo(
+    () => series.map((item, index) => ({ item, index })).filter(({ item }) => inPingChartGroup(item, group)),
+    [series, group],
+  )
   const displaySeries = useMemo(
     () => groupSeries.filter(({ item }) => !hidden.has(item.key || item.label)),
     [groupSeries, hidden],
@@ -128,7 +130,7 @@ function PingTrendChart({ serverIndex, initial, targetKey, mode }: { serverIndex
       .then((payload) => {
         if (controller.signal.aborted) return
         if (payload.success) {
-          setSeries([...(payload.series ? [{ ...payload.series, key: '__avg__', label: '平均' }] : []), ...(payload.all_series || [])])
+          setSeries(historyPingSeries(payload.series, payload.all_series))
           setTimeMeta({
             generatedAt: payload.generated_at ?? Math.floor(Date.now() / 1000),
             bucketSec: payload.bucket_sec ?? probeRangeBucketSec(range),
@@ -200,6 +202,11 @@ function PingTrendChart({ serverIndex, initial, targetKey, mode }: { serverIndex
         <button type="button" className={group === 'idc' ? 'active' : ''} onClick={() => setGroup('idc')}>
           海外
         </button>
+        {hasIpv6 && (
+          <button type="button" className={group === 'v6' ? 'active' : ''} onClick={() => setGroup('v6')}>
+            IPv6
+          </button>
+        )}
         <span className="ranges-sep" />
         <button
           type="button"
@@ -239,7 +246,7 @@ function PingTrendChart({ serverIndex, initial, targetKey, mode }: { serverIndex
         {loading && <div className="loading-overlay">加载中…</div>}
         {!loading && !displaySeries.length && (
           <div className="chart-empty">
-            该服务器未配置{group === 'cn' ? '内地' : '海外'}探测点
+            该服务器未配置{group === 'cn' ? '内地' : group === 'v6' ? ' IPv6 ' : '海外'}探测点
           </div>
         )}
         <HorizontalChart width={Math.max(120, rows.length * 82 * zoom)}>
@@ -320,7 +327,9 @@ export function ServerDetail({ server, index, onClose, showHealthScore = false }
   const flag = regionFlag(server.region)
   const ping = server.ping || []
   const average = averagePing(ping)
-  const lines = [{ ...average, key: '__avg__' }, ...ping]
+  const ipv6 = ping.filter(isIpv6Ping)
+  const ipv6Average = ipv6.length ? aggregatePingGroup(ipv6, PING_IPV6_AVERAGE.key, PING_IPV6_AVERAGE.label) : undefined
+  const lines = [{ ...average, key: '__avg__' }, ...(ipv6Average ? [ipv6Average] : []), ...ping]
   const health = useMemo(() => serverHealth(server), [server])
 
   useEffect(() => {
@@ -378,7 +387,7 @@ export function ServerDetail({ server, index, onClose, showHealthScore = false }
                       (server.traffic_used_up !== undefined || server.traffic_used_down !== undefined)
                         ? `↑ ${bytes(server.traffic_used_up, false)} · ↓ ${bytes(server.traffic_used_down, false)}`
                         : null,
-                      server.period_start && server.period_end ? `${server.period_start.slice(5)} — ${server.period_end.slice(5)}` : null,
+                      trafficPeriodText(server) ?? null,
                     ].filter(Boolean).join(' · ')}
                   />
                 )}
@@ -490,7 +499,7 @@ export function ServerDetail({ server, index, onClose, showHealthScore = false }
                     {server.provider_name && (
                       <span>
                         <Wifi size={13} />
-                        服务商: {server.provider_name}
+                        服务商: <ProviderLogo path={server.provider_logo} size={14} />{server.provider_name}
                       </span>
                     )}
                   </div>
@@ -548,6 +557,7 @@ export function ServerDetail({ server, index, onClose, showHealthScore = false }
                     <Wifi size={14} />
                     <select value={selected} onChange={(event) => setSelected(event.target.value)}>
                       <option value="__avg__">平均</option>
+                      {ipv6Average && <option value={PING_IPV6_AVERAGE.key}>{PING_IPV6_AVERAGE.label}</option>}
                       {ping.map((item) => (
                         <option key={item.key || item.label} value={item.key || item.label}>
                           {item.label}

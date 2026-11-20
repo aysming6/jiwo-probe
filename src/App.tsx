@@ -1,47 +1,70 @@
+import { ProviderLogo, providerLogoSrc } from './ProviderLogo'
 import { ThemeSelect } from './ThemePicker'
 import { useNetworkSpeed } from './use-network-speed'
 import { ConnectionCounts, UnlockButton } from './ServerCapabilities'
-import { ConnectionHistory } from './ConnectionHistory'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ConnectionBox, ConnectionHistory } from './ConnectionHistory'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Activity, LockOpen, ArrowDown, ArrowDownUp, ArrowUp, BadgeDollarSign, Cable, Calendar, CalendarClock, CheckCircle2, ChevronDown, CircleDollarSign, Clock, Cpu, Crown, Database, Gauge, Gem, Globe2, HardDrive, LayoutGrid, List, MapPin, MemoryStick, Moon, Network, PieChart, RefreshCw, Rows3, Rows4, Search, Server, Sun, SunMoon, TrendingUp, Trophy, Wallet, Wifi, XCircle } from 'lucide-react'
+import { Activity, ArrowDown, ArrowUp, BadgeDollarSign, ChartColumn, Calendar, CalendarClock, ChevronDown, CircleDollarSign, Cpu, Crown, Database, Gauge, Gem, HardDrive, LayoutGrid, List, MapPin, MemoryStick, Moon, Network, PieChart, RefreshCw, Rows3, Rows4, Search, Server, Sun, SunMoon, TriangleAlert, Wallet, Wifi } from 'lucide-react'
 import type { ProbePingSeries, ProbeServer, ThemeName } from './types'
 import { EnrichedServer, getActiveTheme, getDarkOverride, getThemeOverride, setDarkOverride, setTheme, useProbe } from './use-probe'
 import { Twemoji } from './Twemoji'
 import { PasskeyLogin } from './PasskeyLogin'
 import { CardPingGroups } from './CardPingGroups'
+import { LazyCard } from './LazyCard'
 import { computeRemainingValue, formatMoney } from './value'
-import { LEADERBOARD_ORDER, rankConnectionCounts, rankUnlocks, type LeaderboardKey } from './leaderboards'
-import { connectionCount } from './unlocks'
+import { LEADERBOARD_ORDER } from './leaderboards'
+import { Leaderboard, formatUptime, monthlyCost } from './Leaderboard'
 import { ProbeHistoryDaysContext } from './use-probe-range'
-import { CYCLE_LABELS as cycleLabel, CYCLE_MONTHS, expiryTimestamp, isPermanent } from './renewal'
-import { bytes, expiring, expired, remainingDays, regionFlag, hasLeadingFlag, pct, averagePing } from './server-format'
+import { CYCLE_LABELS as cycleLabel, expiryTimestamp, isPermanent, renewalPriceCny, upcomingExpiries } from './renewal'
+import { isOneTimeTraffic, trafficPeriodText } from './traffic-display'
+import { bytes, expiring, expired, remainingDays, regionFlag, hasLeadingFlag, pct, averagePing, probeRegion } from './server-format'
 import { StaleDataBanner } from './StaleDataBanner'
 import { ForwardOverview, prefetchDeferred, ServerDetail, SystemTrendChart, TrafficDialog, TrendDialog } from './deferred'
 import { Meter, systemTitle, SystemIcon, routeCarrierLabels, goldRoutes, displayReturnRoute, ReturnRouteBadges } from './components/ServerVisuals'
 import { LUMINA_QUOTA_SEGMENTS } from './components/LuminaHealthBars'
 import { ProbeLicenseBar } from './components/ProbeLicenseBar'
+import { ProbeHeaderLicense } from './components/ProbeHeaderLicense'
+import { globeCountryCode, regionGroupLabel } from './globe-regions'
+import { PROBE_ALERT_PCT, PROBE_SORT_KEYS, PROBE_SORT_LABELS, connectionTotals, dailyTrafficTotals, formatCapacity, formatSize, meterTone, networkQuality, kpiColumns, probeHealthIssue, quotaSummary, relativeTime, sortProbeServers, type ProbeHealthIssue, type ProbeSortKey } from './probe-overview'
 
-const RegionGlobe = lazy(() => import('./RegionGlobe').then((module) => ({ default: module.RegionGlobe })))
-const PremiumProbePage = lazy(() => import('./PremiumProbePage').then((module) => ({ default: module.PremiumProbePage })))
-const GmApp = lazy(() => import('./glassmorphism/GmApp').then((module) => ({ default: module.default })))
-const EmeraldApp = lazy(() => import('./emerald/EmeraldApp').then((module) => ({ default: module.default })))
-const MiniApp = lazy(() => import('./mini/MiniApp'))
-const LuminaPlusApp = lazy(() => import('./luminaplus/LuminaPlusApp'))
-const MiniServerDetail = lazy(() => import('./mini/MiniServerDetail'))
-
-function speedScale(bytesPerSecond: number, networkSpeed: (value: number) => string): {
-  percent: number
-  label: string
-} {
-  const bps = Math.max(0, bytesPerSecond) * 8
-  const steps = [1e6, 10e6, 100e6, 1e9, 10e9, 100e9, 1e12]
-  const ceiling = steps.find((value) => bps <= value) || steps[steps.length - 1]
-  return {
-    percent: Math.min(100, (bps / ceiling) * 100),
-    label: networkSpeed(ceiling / 8),
-  }
+// 与主控内置探针同款的地区地球（拱形弧线 + 亮点旁旗帜与台数）
+const RegionGlobe = lazy(() => import('./ProbeRegionGlobe').then((module) => ({ default: module.ProbeRegionGlobe })))
+const loadPremium = () => import('./PremiumProbePage')
+const loadGlassmorphism = () => import('./glassmorphism/GmApp')
+const loadEmerald = () => import('./emerald/EmeraldApp')
+const loadLite = () => import('./mini/MiniApp')
+const loadLuminaPlus = () => import('./luminaplus/LuminaPlusApp')
+const loadNezha = () => import('./nezha/NezhaApp')
+const PremiumProbePage = lazy(() => loadPremium().then((module) => ({ default: module.PremiumProbePage })))
+const GmApp = lazy(() => loadGlassmorphism().then((module) => ({ default: module.default })))
+const EmeraldApp = lazy(() => loadEmerald().then((module) => ({ default: module.default })))
+const MiniApp = lazy(loadLite)
+const LuminaPlusApp = lazy(loadLuminaPlus)
+const NezhaApp = lazy(loadNezha)
+const THEME_CHUNKS: Record<string, () => Promise<unknown>> = {
+  premium: loadPremium,
+  glassmorphism: loadGlassmorphism,
+  emerald: loadEmerald,
+  lite: loadLite,
+  luminaplus: loadLuminaPlus,
+  nezha: loadNezha,
 }
+
+/** 回访时主题已知，不必等首帧数据到了才开始下载主题包。 */
+export function preloadActiveThemeChunk(): void {
+  THEME_CHUNKS[getActiveTheme()]?.().catch(() => { /* 真正渲染时会再加载一次 */ })
+}
+
+let themeChunksPrefetched = false
+/** 访客要换主题时一次性预取所有主题包（压缩后合计约 110 KB），点选后直接渲染，不出现「正在加载…」。省流量模式不预取。 */
+export function prefetchThemeChunks(): void {
+  if (themeChunksPrefetched) return
+  themeChunksPrefetched = true
+  if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return
+  for (const load of Object.values(THEME_CHUNKS)) load().catch(() => { /* 点选时会再加载 */ })
+}
+const MiniServerDetail = lazy(() => import('./mini/MiniServerDetail'))
 
 function RegionSelect({ regions, value, onChange }: { regions: string[]; value: string; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false)
@@ -112,362 +135,22 @@ function RegionSelect({ regions, value, onChange }: { regions: string[]; value: 
   )
 }
 
-function SpeedSummary({ label, value, direction }: { label: string; value: number; direction: 'up' | 'down' }) {
-  const networkSpeed = useNetworkSpeed()
-  const scale = speedScale(value, networkSpeed)
-  return (
-    <div className={`speed-summary ${direction}`}>
-      <div>
-        <span>
-          {direction === 'up' ? <ArrowUp size={19} /> : <ArrowDown size={19} />}
-          {label}
-        </span>
-        <strong>{networkSpeed(value)}</strong>
-      </div>
-      <div className="speed-progress">
-        <i style={{ width: `${scale.percent}%` }} />
-        <small>{scale.label}</small>
-      </div>
-    </div>
-  )
-}
-
-function AssetsSummary({ servers }: { servers: ProbeServer[] }) {
-  const stats = useMemo(() => {
-    let totalValue = 0
-    let totalMonthly = 0
-    let priced = 0
-    for (const server of servers) {
-      const rv = computeRemainingValue(server)
-      if (!rv) continue
-      priced++
-      totalValue += rv.value
-      totalMonthly += rv.daily * 30
-    }
-    return { totalValue, totalMonthly, priced }
-  }, [servers])
-  if (stats.priced === 0) return null
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('probe-summary-assets') === '1')
-  const toggle = () => {
-    setCollapsed((value) => {
-      const next = !value
-      localStorage.setItem('probe-summary-assets', next ? '1' : '0')
-      return next
-    })
+// 资产：按剩余天数折算的总剩余价值与月均成本（与 value.ts 同一口径），没有任何定价时返回 null
+function assetStats(servers: ProbeServer[]) {
+  let totalValue = 0
+  let totalMonthly = 0
+  let priced = 0
+  for (const server of servers) {
+    const rv = computeRemainingValue(server)
+    // 只汇总人民币口径；主控没下发换算价的外币服务器不计入
+    if (!rv || rv.currency.toUpperCase() !== 'CNY') continue
+    priced++
+    totalValue += rv.value
+    totalMonthly += rv.daily * 30
   }
-  return (
-    <article className={`summary-card collapse-card${collapsed ? ' collapsed' : ' open'}`}>
-      <button
-        className="summary-toggle"
-        type="button"
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? '展开资产总揽' : '折叠资产总揽'}
-        onClick={toggle}
-      >
-        <span>
-          <BadgeDollarSign size={18} />
-          资产总揽
-        </span>
-        <span className="summary-toggle-info">
-          {collapsed && (
-            <>
-              <b>{formatMoney(stats.totalValue, 'CNY', true)}</b>
-              <em>月均 {formatMoney(stats.totalMonthly, 'CNY', true)}</em>
-            </>
-          )}
-          <ChevronDown size={17} />
-        </span>
-      </button>
-      {!collapsed && (
-        <div className="collapse-body">
-          <div className="assets-stats">
-            <div className="assets-main">
-              <span>总剩余价值</span>
-              <strong>{formatMoney(stats.totalValue, 'CNY', true)}</strong>
-            </div>
-            <div className="assets-sub">
-              <span>
-                月均成本 <b>{formatMoney(stats.totalMonthly, 'CNY', true)}</b>
-              </span>
-              <span>
-                覆盖 <b>{stats.priced}</b> / {servers.length} 台
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-    </article>
-  )
+  return priced ? { totalValue, totalMonthly, priced } : null
 }
 
-const isCnLabel = (label: string) => /电信|联通|移动/.test(label)
-
-function groupedPingAvg(ping: ProbePingSeries[], cn: boolean): number {
-  const list = (ping || []).filter((item) => isCnLabel(item.label) === cn)
-  const current = list.filter((item) => item.current_ms >= 0).map((item) => item.current_ms)
-  return current.length ? current.reduce((a, b) => a + b, 0) / current.length : -1
-}
-
-
-function formatUptime(seconds: number): string {
-  const d = Math.floor(seconds / 86400)
-  const h = Math.floor((seconds % 86400) / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (d > 0) return h > 0 ? `${d}天${h}小时` : `${d}天`
-  if (h > 0) return m > 0 ? `${h}小时${m}分` : `${h}小时`
-  return `${Math.max(1, m)}分`
-}
-
-function monthlyCost(server: ProbeServer): number {
-  const price = server.renewal_price_cny ?? server.renewal_price
-  if (price === undefined || price === null) return -1
-  const months = CYCLE_MONTHS[server.renewal_cycle || 'month']
-  return months ? price / months : -1
-}
-
-function todayTraffic(server: ProbeServer): number {
-  const daily = server.daily_traffic
-  return daily?.length ? daily[daily.length - 1].total ?? -1 : -1
-}
-
-function weekTraffic(server: ProbeServer): number {
-  const daily = server.daily_traffic || []
-  const week = daily.slice(-7)
-  return week.length ? week.reduce((a, b) => a + (b.total ?? 0), 0) : -1
-}
-
-function load1m(server: ProbeServer): number {
-  const parts = (server.loadavg || '').split(/\s+/).map(Number).filter((v) => Number.isFinite(v))
-  return parts.length ? parts[0] : -1
-}
-
-function daysLeft(server: ProbeServer): number {
-  const expiry = expiryTimestamp(server)
-  return expiry === undefined ? -1 : Math.ceil((expiry - Date.now()) / 86400000)
-}
-
-function avgLossPct(server: ProbeServer, cn: boolean): number {
-  const losses = (server.ping || [])
-    .filter((item) => isCnLabel(item.label) === cn)
-    .map((item) => item.loss_pct)
-    .filter((value) => value >= 0)
-  return losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : -1
-}
-
-const LEADERBOARD_META: Record<LeaderboardKey, { label: string; icon: React.ReactNode }> = {
-  cpu: { label: 'CPU', icon: <Cpu size={13} /> },
-  mem: { label: '内存', icon: <MemoryStick size={13} /> },
-  disk: { label: '磁盘', icon: <HardDrive size={13} /> },
-  load: { label: '负载', icon: <Server size={13} /> },
-  traffic: { label: '流量', icon: <PieChart size={13} /> },
-  usage: { label: '流量使用率', icon: <Database size={13} /> },
-  speed: { label: '实时速度', icon: <ArrowDownUp size={13} /> },
-  tcp: { label: 'TCP 连接数', icon: <Cable size={13} /> },
-  udp: { label: 'UDP 连接数', icon: <Network size={13} /> },
-  unlock: { label: '解锁', icon: <LockOpen size={13} /> },
-  uptime: { label: '在线时长', icon: <Clock size={13} /> },
-  today: { label: '今日流量', icon: <CalendarClock size={13} /> },
-  week: { label: '近7日流量', icon: <TrendingUp size={13} /> },
-  'loss-cn': { label: '内地丢包率', icon: <Activity size={13} /> },
-  'loss-idc': { label: '海外丢包率', icon: <Wifi size={13} /> },
-  cost: { label: '月成本', icon: <Wallet size={13} /> },
-  expiry: { label: '到期时间', icon: <Calendar size={13} /> },
-  'ping-cn': { label: '内地延迟', icon: <Gauge size={13} /> },
-  'ping-idc': { label: '海外延迟', icon: <Globe2 size={13} /> },
-}
-const LEADERBOARD_TABS = LEADERBOARD_ORDER.map(key => ({ key, ...LEADERBOARD_META[key] }))
-
-function Leaderboard({ servers }: { servers: ProbeServer[] }) {
-  const networkSpeed = useNetworkSpeed()
-  const [open, setOpen] = useState(false)
-  const [tab, setTab] = useState<LeaderboardKey>(LEADERBOARD_ORDER[0])
-  const [desc, setDesc] = useState(true)
-  const [expanded, setExpanded] = useState<number | null>(null)
-  const selectTab = (key: LeaderboardKey) => {
-    if (key === tab) {
-      setDesc((value) => !value)
-    } else {
-      setTab(key)
-      setDesc(key !== 'expiry') // 到期时间默认升序(最快到期在前)
-    }
-    setExpanded(null)
-  }
-  const pingTab = tab === 'ping-cn' || tab === 'ping-idc'
-  const lossTab = tab === 'loss-cn' || tab === 'loss-idc'
-  const connectionTab = tab === 'tcp' || tab === 'udp'
-  const unlockTab = tab === 'unlock'
-  // 解锁榜：已解锁数 / 有效检测数与分类明细，按服务器对象查找
-  const unlockRows = useMemo(() => unlockTab ? new Map(rankUnlocks(servers).map(row => [row.server, row])) : null, [servers, unlockTab])
-  const rows = useMemo(() => {
-    if (tab === 'tcp' || tab === 'udp') {
-      return rankConnectionCounts(servers, tab, desc).slice(0, 10).map(row => ({ ...row, lines: [] }))
-    }
-    if (tab === 'unlock') {
-      return rankUnlocks(servers, desc).slice(0, 10).map(({ server, index, unlocked }) => ({ server, index, value: unlocked, lines: [] }))
-    }
-    const indexed = servers.map((server, index) => {
-      const avg = averagePing(server.ping || [])
-      const value =
-        tab === 'cpu' ? server.cpu_pct ?? -1
-        : tab === 'mem' ? pct(server.mem_used, server.mem_total)
-        : tab === 'disk' ? pct(server.disk_used, server.disk_total)
-        : tab === 'load' ? load1m(server)
-        : tab === 'traffic' ? server.traffic_used ?? -1
-        : tab === 'usage' ? pct(server.traffic_used, server.traffic_limit)
-        : tab === 'speed' ? (server.download_speed ?? 0) + (server.upload_speed ?? 0)
-        : tab === 'uptime' ? server.uptime ?? -1
-        : tab === 'today' ? todayTraffic(server)
-        : tab === 'week' ? weekTraffic(server)
-        : tab === 'loss-cn' ? avgLossPct(server, true)
-        : tab === 'loss-idc' ? avgLossPct(server, false)
-        : tab === 'cost' ? monthlyCost(server)
-        : tab === 'expiry' ? daysLeft(server)
-        : tab === 'ping-cn' ? groupedPingAvg(server.ping || [], true)
-        : tab === 'ping-idc' ? groupedPingAvg(server.ping || [], false)
-        : avg.current_ms
-      const lines = pingTab || lossTab
-        ? (server.ping || [])
-            .filter((item) => isCnLabel(item.label) === (tab === 'ping-cn' || tab === 'loss-cn'))
-            .map((item) => ({ label: item.label, ms: item.current_ms, loss: item.loss_pct }))
-        : []
-      return { server, index, value, lines }
-    })
-    return indexed
-      .filter((row) => row.value >= 0)
-      .sort((a, b) => (desc ? b.value - a.value : a.value - b.value))
-      .slice(0, 10)
-  }, [servers, tab, desc, pingTab, lossTab])
-  const format = (value: number, server: ProbeServer) =>
-    tab === 'cpu' || tab === 'mem' || tab === 'disk' ? `${value.toFixed(1)}%`
-    : tab === 'load' ? value.toFixed(2)
-    : tab === 'traffic' ? bytes(value, false)
-    : tab === 'usage' ? `${value.toFixed(1)}%`
-    : tab === 'speed' ? `↓${networkSpeed(server.download_speed ?? 0)} ↑${networkSpeed(server.upload_speed ?? 0)}`
-    : connectionTab ? connectionCount(value)
-    : unlockTab ? (() => { const row = unlockRows?.get(server); return row ? `${row.unlocked}/${row.total} · ${Math.round(row.ratio * 100)}%` : String(value) })()
-    : tab === 'uptime' ? formatUptime(value)
-    : tab === 'today' || tab === 'week' ? bytes(value, false)
-    : tab === 'loss-cn' || tab === 'loss-idc' ? `${value.toFixed(2)}%`
-    : tab === 'cost' ? `¥${value.toFixed(0)}/月`
-    : tab === 'expiry' ? `${Math.round(value)} 天`
-    : `${value.toFixed(0)} ms`
-  return (
-    <section className={`leaderboard-card ${open ? 'open' : ''}`}>
-      <button className="globe-toggle" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span>
-          <Trophy size={18} />
-          多维榜单
-        </span>
-        <span>
-          Top 10
-          <ChevronDown size={17} />
-        </span>
-      </button>
-      {open && (
-        <div className="leaderboard-body">
-          <div className="leaderboard-tabs">
-            {LEADERBOARD_TABS.map((item) => (
-              <button key={item.key} type="button" aria-pressed={tab === item.key} className={tab === item.key ? 'active' : ''} onClick={() => selectTab(item.key)}>
-                {item.icon}
-                {item.label}
-                {tab === item.key && <span className="sort-arrow">{desc ? '↓' : '↑'}</span>}
-              </button>
-            ))}
-          </div>
-          {unlockTab && <p className="lb-note">按已解锁项数排名，同数量时比解锁率；与主控解锁徽标同一口径：仅自制剧算解锁，检测失败不计入。无检测数据的节点不参与排名，展开可看各分类。</p>}
-          {connectionTab && <p className="lb-note">{tab === 'tcp' ? '整机已建立 TCP 连接数' : '整机 UDP socket 数'}，非代理用户数；未上报不参与排名，离线节点显示最近上报值。</p>}
-          <ol
-            className="leaderboard-list"
-            onClick={(event) => {
-              // 事件委托: 轮询刷新等 DOM 时序下子按钮可能被替换, 直接绑定会丢事件(#175)
-              // 在稳定父级 ol 上统一处理, 通过 data-idx 定位
-              const target = event.target as HTMLElement
-              const main = target.closest('.lb-main')
-              if (main) {
-                const idx = main.getAttribute('data-idx')
-                if (idx !== null && idx !== '') location.hash = `#/server/${idx}`
-                return
-              }
-              const expand = target.closest('.lb-expand')
-              if (expand) {
-                const idx = expand.getAttribute('data-idx')
-                if (idx !== null && idx !== '') {
-                  const n = Number(idx)
-                  setExpanded((prev) => (prev === n ? null : n))
-                }
-              }
-            }}
-          >
-            {rows.map(({ server, index, value, lines }, rank) => (
-              <li key={`${server.name}-${index}`}>
-                <div className="lb-row">
-                  <button type="button" className="lb-main" data-idx={index}>
-                    <span className="rank">{rank + 1}</span>
-                    <span className="lb-name">
-                      <Twemoji>
-                        {regionFlag(server.region) && !hasLeadingFlag(server.name || '') ? `${regionFlag(server.region)} ${server.name}` : server.name}
-                      </Twemoji>
-                    </span>
-                    <span className="lb-value">
-                      {format(value, server)}
-                      {(pingTab || lossTab) && lines.length > 0 && <em className="lb-lines-count">{lines.filter((l) => l.ms >= 0).length}线</em>}
-                    </span>
-                  </button>
-                  {((pingTab || lossTab) && lines.length > 0 || unlockTab) && (
-                    <button
-                      type="button"
-                      className={`lb-expand${expanded === index ? ' open' : ''}`}
-                      aria-label={expanded === index ? (unlockTab ? '收起解锁分类' : '收起线路明细') : (unlockTab ? '展开解锁分类' : '展开线路明细')}
-                      data-idx={index}
-                    >
-                      <ChevronDown size={13} />
-                    </button>
-                  )}
-                </div>
-                {unlockTab && expanded === index && (
-                  <div className="lb-lines">
-                    {(unlockRows?.get(server)?.categories ?? []).map((category) => (
-                      <span key={category.key} className={category.unlocked === 0 ? 'timeout' : ''}>
-                        {category.label}
-                        <b>{category.unlocked}/{category.total}</b>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {(pingTab || lossTab) && expanded === index && (
-                  <div className="lb-lines">
-                    {lines.map((line) => (
-                      <span
-                        key={line.label}
-                        className={lossTab ? (line.loss < 0 ? 'timeout' : '') : line.ms < 0 ? 'timeout' : ''}
-                      >
-                        {line.label}
-                        <b>
-                          {lossTab
-                            ? line.loss < 0
-                              ? '—'
-                              : `${line.loss.toFixed(2)}%`
-                            : line.ms < 0
-                              ? '超时'
-                              : `${line.ms.toFixed(0)} ms`}
-                        </b>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </li>
-            ))}
-            {!rows.length && (
-              <li className="lb-empty">
-                {connectionTab || tab === 'uptime' || tab === 'today' ? '等待探针数据上报' : '暂无数据'}
-              </li>
-            )}
-          </ol>
-        </div>
-      )}
-    </section>
-  )
-}
 function SystemTrendDialog({ serverIndex, title, metric, close }: { serverIndex: number; title: string; metric: 'cpu' | 'mem' | 'disk'; close: () => void }) {
   return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={close}>
@@ -674,7 +357,7 @@ function ServerCardLumina({ server, index }: { server: EnrichedServer; index: nu
             </h2>
           </div>
           <span className="lumina-card-actions">
-            <UnlockButton server={server} />
+            <ProviderLogo path={server.provider_logo} name={server.provider_name} url={server.provider_url} /><UnlockButton server={server} />
             <span title={systemTitle(server)}>
               <SystemIcon server={server} />
             </span>
@@ -793,7 +476,7 @@ function ServerCardLumina({ server, index }: { server: EnrichedServer; index: nu
                 <strong>{server.traffic_limit ? bytes(Math.max(0, server.traffic_limit - server.traffic_used)) : bytes(server.traffic_used)}</strong>
                 {(() => {
                   // 周期重置倒计时 + 重置日 (主控 period_end, 如 2026-08-31)
-                  if (!server.period_end) return null
+                  if (!server.period_end) return isOneTimeTraffic(server) ? <span className="lumina-quota-reset" title="一次性流量：用完不重置">一次性流量</span> : null
                   const days = Math.ceil((new Date(`${server.period_end}T23:59:59`).getTime() - Date.now()) / 86400000)
                   if (days < 0) return null
                   return <span className="lumina-quota-reset" title={`流量周期 ${server.period_start ?? ''} ~ ${server.period_end}`}>{`重置 ${server.period_end.slice(5)} · 剩 ${days} 天`}</span>
@@ -858,37 +541,125 @@ function ServerCardLumina({ server, index }: { server: EnrichedServer; index: nu
   )
 }
 
-function ServerCard({ server, index }: { server: ProbeServer; index: number }) {
+// 「4 核 · 8 线程」；线程数与核心数相同时只写核心
+function cpuCoresLabel(server: ProbeServer): string | undefined {
+  const cores = server.cpu_cores ? `${server.cpu_cores} 核` : ''
+  const threads = server.cpu_threads && server.cpu_threads !== server.cpu_cores ? `${server.cpu_threads} 线程` : ''
+  return [cores, threads].filter(Boolean).join(' · ') || undefined
+}
+
+// 离线卡片的规格行：「2 核 · 1 GB 内存 · 20 GB 硬盘」
+function specsLabel(server: ProbeServer): string | undefined {
+  const parts = [
+    server.cpu_cores ? `${server.cpu_cores} 核` : '',
+    server.mem_total ? `${formatSize(server.mem_total)} 内存` : '',
+    server.disk_total ? `${formatSize(server.disk_total)} 硬盘` : '',
+  ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : undefined
+}
+
+const healthLabels: Record<ProbeHealthIssue['key'], string> = { cpu: 'CPU', mem: '内存', disk: '硬盘', traffic: '流量' }
+
+function ServerCard({ server, index, dense = false }: { server: ProbeServer; index: number; /** 紧凑模式：只留占用、流量和网速，一屏放更多台 */ dense?: boolean }) {
   const networkSpeed = useNetworkSpeed()
   const [trafficOpen, setTrafficOpen] = useState(false)
   const name = server.name || `服务器 ${index + 1}`
   const flag = regionFlag(server.region)
+  const issue = probeHealthIssue(server, server.traffic_used)
+  const hasMetric = server.cpu_pct !== undefined || (server.mem_total ?? 0) > 0 || (server.disk_total ?? 0) > 0
+  const cpuInfo = [server.cpu_model, cpuCoresLabel(server)].filter(Boolean).join(' · ') || undefined
+  const trafficPct = pct(server.traffic_used, server.traffic_limit)
+  const openDetail = () => { location.hash = `#/server/${index}` }
+  const meta = (server.expires_at || server.renewal_price !== undefined || isPermanent(server)) && (
+    <div className="server-meta" onClick={(event) => event.stopPropagation()}>
+      {isPermanent(server) && <span><CalendarClock size={13} />永久</span>}
+      {!isPermanent(server) && server.expires_at &&
+        (server.provider_url ? (
+          <a href={server.provider_url} target="_blank" rel="noopener noreferrer" className={expiring(server) || expired(server) ? 'warning' : ''} title={server.provider_name ? `前往 ${server.provider_name} 续费` : '前往服务商续费'}>
+            <CalendarClock size={13} />
+            {remainingDays(server.expires_at)}
+          </a>
+        ) : (
+          <span className={expiring(server) || expired(server) ? 'warning' : ''}>
+            <CalendarClock size={13} />
+            {remainingDays(server.expires_at)}
+          </span>
+        ))}
+      {server.renewal_price !== undefined && (
+        <span>
+          <Wallet size={13} />
+          {server.renewal_price_cny !== undefined ? `¥${server.renewal_price_cny.toFixed(2)}` : `${server.renewal_currency || 'CNY'} ${server.renewal_price}`} / {cycleLabel[server.renewal_cycle || 'month']}
+          {server.renewal_price_cny !== undefined && server.renewal_currency !== 'CNY' && (
+            <small>
+              （{server.renewal_currency} {server.renewal_price}）
+            </small>
+          )}
+        </span>
+      )}
+    </div>
+  )
+  const title = (
+    <div className="server-title">
+      <span className={server.online ? 'status online' : 'status'} />
+      <h2>
+        <Twemoji>{flag && !hasLeadingFlag(name) ? `${flag} ${name}` : name}</Twemoji>
+      </h2>
+      {issue ? (
+        <em className="health-badge bad" title={`${healthLabels[issue.key]}占用超过 ${PROBE_ALERT_PCT}%`}>
+          <TriangleAlert size={11} />
+          {healthLabels[issue.key]} {issue.pct.toFixed(0)}%
+        </em>
+      ) : server.online && hasMetric && <em className="health-badge ok">健康</em>}
+      <i className="server-title-gap" />
+      <ProviderLogo path={server.provider_logo} name={server.provider_name} url={server.provider_url} />
+      <UnlockButton server={server} />
+      <span title={systemTitle(server)} onClick={(event) => event.stopPropagation()}>
+        <SystemIcon server={server} />
+      </span>
+      <span>
+        <i className="detail-hint">详情 ›</i>
+      </span>
+    </div>
+  )
+  const cardProps = {
+    onClick: openDetail,
+    role: 'button',
+    tabIndex: 0,
+    title: '点击查看详情',
+    onKeyDown: (event: React.KeyboardEvent) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDetail() } },
+  }
+  // 离线：数据都是旧的，只留规格、最后在线时间和续费信息
+  if (!server.online) {
+    const specs = specsLabel(server)
+    return (
+      <article className={`server-card offline${dense ? ' dense' : ''}`} {...cardProps}>
+        {title}
+        {specs && <div className="server-specs">{specs}</div>}
+        <div className="offline-note">
+          离线{server.last_seen && relativeTime(server.last_seen) && ` · 最后在线 ${relativeTime(server.last_seen)}`}
+        </div>
+        {meta}
+      </article>
+    )
+  }
+  // 计费口径：按周期统计的写「本周期」，其余（计数器累计、按累计值估算）写「计数器重置以来」，与主控探针页同一叫法。
+  // 卡片上标签只写「流量」，口径放在悬停提示里，否则手机上长标签会被数值挤成半截。
+  const trafficScope = server.traffic_used_scope && server.traffic_used_scope !== 'configured_period' ? '计数器重置以来计费用量' : '本周期计费用量'
+  const bootDown = server.boot_traffic_down ?? server.cumulative_down
+  const bootUp = server.boot_traffic_up ?? server.cumulative_up
   return (
     <>
-    <article className="server-card" onClick={() => { location.hash = `#/server/${index}` }} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); location.hash = `#/server/${index}` } }} title="点击查看详情">
-      <div className="server-title">
-        <span className={server.online ? 'status online' : 'status'} />
-        <h2>
-          <Twemoji>{flag && !hasLeadingFlag(name) ? `${flag} ${name}` : name}</Twemoji>
-        </h2>
-        <UnlockButton server={server} />
-        <span title={systemTitle(server)} onClick={(event) => event.stopPropagation()}>
-          <SystemIcon server={server} />
-        </span>
-        <span>
-          {server.online ? '在线' : '离线'}
-          <i className="detail-hint">详情 ›</i>
-        </span>
-      </div>
+    <article className={`server-card probe-card${dense ? ' dense' : ''}`} data-alert={issue ? 'true' : undefined} {...cardProps}>
+      {title}
       <div className="metrics">
-        {server.cpu_pct !== undefined && <Meter icon={<Cpu size={14} />} label="CPU" value={`${server.cpu_pct.toFixed(1)}%`} percent={server.cpu_pct} />}
-        {server.mem_total !== undefined && <Meter icon={<MemoryStick size={14} />} label="内存" value={`${pct(server.mem_used, server.mem_total).toFixed(1)}%`} percent={pct(server.mem_used, server.mem_total)} />}
-        {server.disk_total !== undefined && <Meter icon={<HardDrive size={14} />} label="硬盘" value={`${pct(server.disk_used, server.disk_total).toFixed(1)}%`} percent={pct(server.disk_used, server.disk_total)} />}
+        {server.cpu_pct !== undefined && <Meter icon={<Cpu size={14} />} label="CPU" value={`${server.cpu_pct.toFixed(1)}%`} percent={server.cpu_pct} sub={cpuCoresLabel(server)} title={cpuInfo} />}
+        {server.mem_total !== undefined && <Meter icon={<MemoryStick size={14} />} label="内存" value={`${pct(server.mem_used, server.mem_total).toFixed(1)}%`} percent={pct(server.mem_used, server.mem_total)} sub={server.mem_total > 0 ? formatCapacity(server.mem_used ?? 0, server.mem_total) : undefined} />}
+        {server.disk_total !== undefined && <Meter icon={<HardDrive size={14} />} label="硬盘" value={`${pct(server.disk_used, server.disk_total).toFixed(1)}%`} percent={pct(server.disk_used, server.disk_total)} sub={server.disk_total > 0 ? formatCapacity(server.disk_used ?? 0, server.disk_total) : undefined} />}
         {server.traffic_used !== undefined && (
           <button
             type="button"
             className="metric metric-button"
-            title="查看日流量趋势"
+            title={`${trafficScope} · 点击查看日流量趋势`}
             onClick={(event) => {
               event.stopPropagation()
               setTrafficOpen(true)
@@ -897,64 +668,38 @@ function ServerCard({ server, index }: { server: ProbeServer; index: number }) {
             <div className="metric-head">
               <span>
                 <PieChart size={14} />
-                流量
+                <span className="metric-label">流量</span>
               </span>
               <strong>
                 {server.traffic_limit ? `${bytes(server.traffic_used, false)} / ${bytes(server.traffic_limit, false)}` : bytes(server.traffic_used, false)}
               </strong>
             </div>
             <div className="meter">
-              <i style={{ width: `${pct(server.traffic_used, server.traffic_limit)}%` }} />
+              <i className={trafficPct > PROBE_ALERT_PCT ? 'bad' : undefined} style={{ width: `${trafficPct}%` }} />
+            </div>
+            <div className="metric-sub">
+              <span>{server.traffic_limit ? `${trafficPct.toFixed(0)}%` : '不限量'}</span>
+              {server.period_end ? <span>{server.period_end.slice(5, 10).replace('-', '/')} 重置</span> : isOneTimeTraffic(server) && <span>一次性</span>}
             </div>
           </button>
         )}
       </div>
-      <div className="speed speed--connections">
-        <div className="card-speed-pair">
-          {(server.upload_speed !== undefined || server.download_speed !== undefined) && <>
-            <span className="download" title={`下行 ${networkSpeed(server.download_speed)}`}>
-              <ArrowDown size={13} />
-              <span className="card-speed-value">{networkSpeed(server.download_speed)}</span>
-            </span>
-            <span className="upload" title={`上行 ${networkSpeed(server.upload_speed)}`}>
-              <ArrowUp size={13} />
-              <span className="card-speed-value">{networkSpeed(server.upload_speed)}</span>
-            </span>
-          </>}
+      <div className="net-boxes">
+        <div className="net-box">
+          <span className="net-box-label">网速</span>
+          <span className="download" title={`下行 ${networkSpeed(server.download_speed)}`}>↓ {networkSpeed(server.download_speed)}</span>
+          <span className="upload" title={`上行 ${networkSpeed(server.upload_speed)}`}>↑ {networkSpeed(server.upload_speed)}</span>
         </div>
-        <ConnectionCounts server={server} variant="inline" />
+        <ConnectionBox server={server} serverIndex={index} />
+        <div className="net-box" title="本次开机以来网卡收发">
+          <span className="net-box-label">开机以来</span>
+          <span>↓ <b>{bootDown !== undefined ? bytes(bootDown, false) : '—'}</b></span>
+          <span>↑ <b>{bootUp !== undefined ? bytes(bootUp, false) : '—'}</b></span>
+        </div>
       </div>
-      <ConnectionHistory server={server} serverIndex={index} />
-      <CardPingGroups variant="classic" ping={server.ping} serverIndex={index} serverName={server.name} />
-      {!!server.return_routes?.length && <ReturnRouteBadges routes={server.return_routes} telecomPaidPeer={server.telecom_paid_peer} variant={document.documentElement.classList.contains('theme-anime') ? 'anime' : undefined} />}
-      {(server.expires_at || server.renewal_price !== undefined || isPermanent(server)) && (
-        <div className="server-meta" onClick={(event) => event.stopPropagation()}>
-          {isPermanent(server) && <span><CalendarClock size={13} />永久</span>}
-          {!isPermanent(server) && server.expires_at &&
-            (server.provider_url ? (
-              <a href={server.provider_url} target="_blank" rel="noopener noreferrer" className={expiring(server) || expired(server) ? 'warning' : ''} title={server.provider_name ? `前往 ${server.provider_name} 续费` : '前往服务商续费'}>
-                <CalendarClock size={13} />
-                {remainingDays(server.expires_at)}
-              </a>
-            ) : (
-              <span className={expiring(server) || expired(server) ? 'warning' : ''}>
-                <CalendarClock size={13} />
-                {remainingDays(server.expires_at)}
-              </span>
-            ))}
-          {server.renewal_price !== undefined && (
-            <span>
-              <Wallet size={13} />
-              {server.renewal_price_cny !== undefined ? `¥${server.renewal_price_cny.toFixed(2)}` : `${server.renewal_currency || 'CNY'} ${server.renewal_price}`} / {cycleLabel[server.renewal_cycle || 'month']}
-              {server.renewal_price_cny !== undefined && server.renewal_currency !== 'CNY' && (
-                <small>
-                  （{server.renewal_currency} {server.renewal_price}）
-                </small>
-              )}
-            </span>
-          )}
-        </div>
-      )}
+      {!dense && <CardPingGroups variant="probe" ping={server.ping} serverIndex={index} serverName={server.name} />}
+      {!dense && !!server.return_routes?.length && <ReturnRouteBadges routes={server.return_routes} telecomPaidPeer={server.telecom_paid_peer} variant={document.documentElement.classList.contains('theme-anime') ? 'anime' : undefined} />}
+      {meta}
     </article>
     {trafficOpen && <TrafficDialog server={server} close={() => setTrafficOpen(false)} />}
     </>
@@ -1037,7 +782,7 @@ function ServerMiniCard({ server, index, expanded }: { server: ProbeServer; inde
           </span>
         )}
         {dying && <span className="mini-expiry">{remainingDays(server.expires_at)}</span>}
-        <UnlockButton server={server} />
+        <ProviderLogo path={server.provider_logo} name={server.provider_name} url={server.provider_url} /><UnlockButton server={server} />
       </div>
       {expanded && (
         <div className="mini-detail mini-resources">
@@ -1147,8 +892,8 @@ function TrafficCell({ server }: { server: ProbeServer }) {
             ↑ {bytes(server.traffic_used_up, false)} · ↓ {bytes(server.traffic_used_down, false)}
           </small>
         )}
-        {server.period_start && server.period_end && (
-          <small className="table-traffic-period">{server.period_start.slice(5)} — {server.period_end.slice(5)}</small>
+        {trafficPeriodText(server) && (
+          <small className="table-traffic-period">{trafficPeriodText(server)}</small>
         )}
         {!!server.traffic_limit && (
           <div className="meter">
@@ -1212,6 +957,8 @@ function ServerTable({ servers }: { servers: ProbeServer[] }) {
   const networkSpeed = useNetworkSpeed()
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  // 有别的服务器带 logo 时，没 logo 的留同宽空位，名称对齐
+  const anyProviderLogo = useMemo(() => servers.some((server) => !!providerLogoSrc(server.provider_logo)), [servers])
 
   const rows = useMemo(() => {
     const dir = sortDir === 'asc' ? 1 : -1
@@ -1268,7 +1015,7 @@ function ServerTable({ servers }: { servers: ProbeServer[] }) {
               return (
                 <tr key={`${server.name}-${index}`} className="table-row-link" onClick={() => { location.hash = `#/server/${index}` }} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); location.hash = `#/server/${index}` } }}>
                   <td className="table-name">
-                    <div className="probe-unlock-name-line"><Twemoji>{server.name || `服务器 ${index + 1}`}</Twemoji><UnlockButton server={server} /></div>
+                    <div className="probe-unlock-name-line">{providerLogoSrc(server.provider_logo) ? <ProviderLogo path={server.provider_logo} name={server.provider_name} /> : anyProviderLogo && <span style={{ width: 18, flexShrink: 0 }} />}<Twemoji>{server.name || `服务器 ${index + 1}`}</Twemoji><UnlockButton server={server} /></div>
                     {server.region && <small>{server.region}</small>}
                     {isPermanent(server) && <small>永久</small>}
                     {!isPermanent(server) && server.expires_at &&
@@ -1323,40 +1070,158 @@ function ServerTable({ servers }: { servers: ProbeServer[] }) {
   )
 }
 
+type ProbeFilter = 'all' | 'online' | 'offline' | 'expiring' | 'expired' | 'renewal' | 'alert'
+type ProbeGroupBy = 'none' | 'region'
+type ProbeDensity = 'standard' | 'dense'
+
+// 工具条的排序 / 分组 / 紧凑选择记在浏览器里；隐私模式等拿不到存储时照常工作
+function readPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const value = localStorage.getItem(key)
+    return value && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+function writePref(key: string, value: string) {
+  try { localStorage.setItem(key, value) } catch { /* 隐私模式下不记忆 */ }
+}
+
+// 汇总区的一格（照主控 v0.6.1-beta.3 探针页）：标题、大数字、说明三行定高；aside 是右栏小图（至少 96px），格子太窄时不显示。
+// 可点击的格子同时是筛选入口
+/**
+ * 一行放不下就等比缩小字号直到放得下（最小 minPx），不折行、不截断。用于实时网速这类关键数字：
+ * 宽字体主题 / 窄格子下宁可字小一点，也不能显示成「1.29 M…」。fitKey 变了（数值变了）重新量。
+ * 最小字号还放不下时藏掉 .fit-drop 说明字，只留数值。
+ */
+function FitText({ children, fitKey, minPx = 9, className }: { children: ReactNode; fitKey: string; minPx?: number; className?: string }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    // 观察格子本身而不是父元素：文字栏宽度跟着字号变，观察它会「缩字号 → 变窄 → 重置字号 → 变宽」来回打架
+    const box = el?.closest('.kpi-cell') ?? el?.parentElement
+    if (!el || !box) return
+    const shrink = () => {
+      el.style.fontSize = ''
+      let size = parseFloat(getComputedStyle(el).fontSize)
+      // 字距 / 箭头宽度不随字号等比缩，一次算不准，收敛几轮
+      for (let i = 0; i < 6 && size > minPx; i++) {
+        const need = el.scrollWidth
+        const avail = el.clientWidth
+        if (avail <= 0 || need <= avail + 0.5) break
+        size = Math.max(minPx, Math.floor(((size * avail) / need) * 10) / 10 - 0.2)
+        el.style.fontSize = `${size}px`
+      }
+      return el.scrollWidth <= el.clientWidth + 0.5
+    }
+    const fit = () => {
+      delete el.dataset.overflow
+      if (!shrink()) {
+        el.dataset.overflow = '1'
+        shrink()
+      }
+    }
+    fit()
+    // 格子宽窄、字体 / 主题变了都要重量；合到下一帧做一次，回调里改字号引起的尺寸变化也只会再排一帧
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(fit)
+    })
+    ro.observe(box)
+    ro.observe(el)
+    void document.fonts?.ready.then(fit)
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [fitKey, minPx])
+  return <span ref={ref} className={className ? `fit-text ${className}` : 'fit-text'}>{children}</span>
+}
+
+function Kpi({ icon, label, value, sub, aside, onClick, active, title, className: extra }: { icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode; aside?: ReactNode; onClick?: () => void; active?: boolean; title?: string; className?: string }) {
+  const className = ['kpi-cell', extra, aside ? 'has-aside' : '', active ? 'active' : ''].filter(Boolean).join(' ')
+  const body = <>
+    <span className="kpi-main">
+      <span className="kpi-label">{icon}<span>{label}</span></span>
+      <strong className="kpi-value">{value}</strong>
+      {sub && <span className="kpi-sub">{sub}</span>}
+    </span>
+    {aside && <span className="kpi-aside" aria-hidden="true">{aside}</span>}
+  </>
+  return onClick ? <button type="button" className={className} aria-pressed={active} onClick={onClick} title={title}>{body}</button> : <div className={className} title={title}>{body}</div>
+}
+
+// 指标格底部的小面积图：多条序列共用纵轴，null 断开
+function KpiSpark({ series, height }: { series: Array<{ values: Array<number | null>; tone: string }>; height: number }) {
+  const max = Math.max(1, ...series.flatMap((item) => item.values.filter((v): v is number => typeof v === 'number')))
+  const width = 100
+  return (
+    <svg className="kpi-spark" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ height }} aria-hidden="true">
+      {series.map((item, index) => {
+        const n = item.values.length
+        if (n < 2) return null
+        const points = item.values.map((v, i) => typeof v === 'number' ? [(i / (n - 1)) * width, height - 2 - (v / max) * (height - 4)] as const : null)
+        const valid = points.filter((p): p is readonly [number, number] => !!p)
+        if (valid.length < 2) return null
+        const line = valid.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join('')
+        const area = `${line}L${valid[valid.length - 1][0].toFixed(1)} ${height}L${valid[0][0].toFixed(1)} ${height}Z`
+        return <g key={index} className={item.tone}><path className="kpi-spark-area" d={area} /><path className="kpi-spark-line" d={line} /></g>
+      })}
+    </svg>
+  )
+}
+
+// 本页打开后的全站网速采样（随快照刷新），留最近 3 分钟，用来画实时网速曲线和峰值
+const SPEED_WINDOW_MS = 3 * 60 * 1000
+function useSpeedHistory(servers: ProbeServer[] | undefined) {
+  const [samples, setSamples] = useState<Array<{ t: number; up: number; down: number }>>([])
+  useEffect(() => {
+    if (!servers?.length) return
+    const now = Date.now()
+    const up = servers.reduce((sum, server) => sum + (server.upload_speed || 0), 0)
+    const down = servers.reduce((sum, server) => sum + (server.download_speed || 0), 0)
+    setSamples((prev) => [...prev.filter((item) => now - item.t <= SPEED_WINDOW_MS), { t: now, up, down }])
+  }, [servers])
+  return samples
+}
+
 export function App() {
   const probe = useProbe()
   const hasData = !!probe.data
   // 首帧数据渲染完再在空闲时预取图表模块，不和主题包、首帧数据抢带宽
   useEffect(() => { if (hasData) prefetchDeferred() }, [hasData])
-  return <ProbeHistoryDaysContext.Provider value={probe.data?.history_days}><StaleDataBanner error={probe.error} updatedAt={probe.updatedAt} /><ProbeApp {...probe} /></ProbeHistoryDaysContext.Provider>
+  return <ProbeHistoryDaysContext.Provider value={probe.data?.history_days}><StaleDataBanner error={probe.error} updatedAt={probe.updatedAt} fromSnapshot={probe.fromSnapshot} /><ProbeApp {...probe} /></ProbeHistoryDaysContext.Provider>
 }
 
 function ProbeApp({ data, error }: ReturnType<typeof useProbe>) {
+  const [boardsOpen, setBoardsOpen] = useState(false)
   const networkSpeed = useNetworkSpeed()
   const servers = data?.servers || []
   const [view, setView] = useState<'card' | 'list' | 'mini'>(() => (localStorage.getItem('probe-view') as 'card' | 'list' | 'mini') || 'card')
   const [miniExpanded, setMiniExpanded] = useState<boolean>(() => localStorage.getItem('probe-mini-expanded') === '1')
-  const [filter, setFilter] = useState<'all' | 'online' | 'offline' | 'expiring' | 'expired' | 'renewal'>('all')
+  const [filter, setFilter] = useState<ProbeFilter>('all')
+  const speedSamples = useSpeedHistory(data?.servers)
+  // 汇总区实际宽度 → 排几列（kpiColumns）；汇总区是条件渲染的，用回调 ref 挂观察器
+  const [kpiWidth, setKpiWidth] = useState(0)
+  const kpiObserver = useRef<ResizeObserver | null>(null)
+  const kpiGridRef = useCallback((el: HTMLDivElement | null) => {
+    kpiObserver.current?.disconnect()
+    kpiObserver.current = null
+    if (!el) return
+    const observer = new ResizeObserver(() => setKpiWidth(el.clientWidth))
+    observer.observe(el)
+    setKpiWidth(el.clientWidth)
+    kpiObserver.current = observer
+  }, [])
+  const [sortKey, setSortKeyState] = useState<ProbeSortKey>(() => readPref('probe-sort', PROBE_SORT_KEYS, 'default'))
+  const [groupBy, setGroupByState] = useState<ProbeGroupBy>(() => readPref('probe-group', ['none', 'region'] as const, 'none'))
+  const [density, setDensityState] = useState<ProbeDensity>(() => readPref('probe-density', ['standard', 'dense'] as const, 'standard'))
+  const setSortKey = (value: ProbeSortKey) => { setSortKeyState(value); writePref('probe-sort', value) }
+  const setGroupBy = (value: ProbeGroupBy) => { setGroupByState(value); writePref('probe-group', value) }
+  const setDensity = (value: ProbeDensity) => { setDensityState(value); writePref('probe-density', value) }
   const [region, setRegion] = useState('all')
   const [search, setSearch] = useState('')
-  const [globeOpen, setGlobeOpen] = useState(false)
-  const [summaryCollapsed, setSummaryCollapsed] = useState<Set<string>>(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem('probe-summary-collapsed') || '[]')
-      return new Set(Array.isArray(raw) ? raw.filter((k): k is string => typeof k === 'string') : [])
-    } catch {
-      return new Set()
-    }
-  })
-  const toggleSummary = (key: string) => {
-    setSummaryCollapsed((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      localStorage.setItem('probe-summary-collapsed', JSON.stringify([...next]))
-      return next
-    })
-  }
   const [theme, setThemeState] = useState<ThemeName | null>(() => getThemeOverride())
   const [activeTheme, setActiveTheme] = useState<string>(() => getActiveTheme())
   // 主控下发主题变化（如自定义主题名）→ 同步 activeTheme（用户手动 override 时不覆盖）
@@ -1473,6 +1338,14 @@ function ProbeApp({ data, error }: ReturnType<typeof useProbe>) {
       </Suspense>
     )
   }
+  if (activeTheme === 'nezha') {
+    return (
+      <Suspense fallback={<main className="center">正在加载哪吒主题…</main>}>
+        <NezhaApp data={data} error={error} onThemeChange={(name) => { setTheme(name); setThemeState(name); setActiveTheme(name ?? getActiveTheme()) }} />
+        {detailIndex !== null && servers[detailIndex] && <MiniServerDetail key={detailIndex} server={servers[detailIndex]} index={detailIndex} onClose={closeDetail} showHealthScore={data.show_health_score === true} />}
+      </Suspense>
+    )
+  }
   if (activeTheme === 'lite') {
     return (
       <Suspense fallback={<main className="center">正在加载 Lite 主题…</main>}>
@@ -1483,31 +1356,175 @@ function ProbeApp({ data, error }: ReturnType<typeof useProbe>) {
   }
   const title = data.title?.trim() || '服务器状态'
   const onlineCount = servers.filter((server) => server.online).length
+  const offlineCount = servers.length - onlineCount
   const expiringCount = servers.filter(expiring).length
   const expiredCount = servers.filter(expired).length
-  const renewalCount = servers.filter((server) => expiring(server) || expired(server)).length
+  const renewalServers = servers.filter((server) => expiring(server) || expired(server))
+  const renewalCount = renewalServers.length
+  const renewalAmount = renewalServers.reduce((sum, server) => sum + (renewalPriceCny(server) ?? 0), 0)
   const regions = [...new Set(servers.map((server) => server.region?.trim()).filter((value): value is string => !!value))].sort((a, b) => a.localeCompare(b, 'zh-CN'))
   const hasExpiry = servers.some((server) => !!server.expires_at)
+  const healthOf = (server: ProbeServer) => probeHealthIssue(server, server.traffic_used)
+  const alertCount = servers.filter((server) => !!healthOf(server)).length
+  const hasMetrics = servers.some((server) => server.cpu_pct !== undefined || server.mem_total !== undefined || server.disk_total !== undefined || server.traffic_used !== undefined)
+  const selectFilter = (next: ProbeFilter) => { setFilter(next); setRegion('all') }
   const query = search.trim().toLowerCase()
-  const visible = servers.filter((server) => {
-    const matchesStatus = filter === 'all' || (filter === 'online' && server.online) || (filter === 'offline' && !server.online) || (filter === 'expiring' && expiring(server)) || (filter === 'expired' && expired(server)) || (filter === 'renewal' && (expiring(server) || expired(server)))
-    if (!matchesStatus) return false
-    if (region !== 'all' && server.region?.trim() !== region) return false
-    if (query) {
-      const haystack = [server.name, server.region, server.region_name, server.region_city, server.region_country, server.provider_name].filter(Boolean).join(' ').toLowerCase()
-      if (!haystack.includes(query)) return false
-    }
-    return true
-  })
+  const visible = sortProbeServers(
+    servers.map((server, index) => ({ server, index })).filter(({ server }) => {
+      const matchesStatus = filter === 'all' || (filter === 'online' && server.online) || (filter === 'offline' && !server.online) || (filter === 'expiring' && expiring(server)) || (filter === 'expired' && expired(server)) || (filter === 'renewal' && (expiring(server) || expired(server))) || (filter === 'alert' && !!healthOf(server))
+      if (!matchesStatus) return false
+      if (region !== 'all' && server.region?.trim() !== region) return false
+      if (query) {
+        const haystack = [server.name, server.region, server.region_name, server.region_city, server.region_country, server.provider_name].filter(Boolean).join(' ').toLowerCase()
+        if (!haystack.includes(query)) return false
+      }
+      return true
+    }),
+    sortKey,
+    (server) => (server as ProbeServer).traffic_used,
+  )
+  // 按地区分组（仅卡片视图）：组按地区名排，没设地区的放最后
+  const grouped = view === 'card' && groupBy === 'region'
+  const groups = grouped
+    ? [...visible.reduce((map, item) => {
+        const key = item.server.region?.trim() || ''
+        map.set(key, [...(map.get(key) ?? []), item])
+        return map
+      }, new Map<string, typeof visible>()).entries()]
+        .sort(([a], [b]) => (!a ? 1 : !b ? -1 : a.localeCompare(b, 'zh-CN')))
+        .map(([key, items]) => ({ key: key || '__none__', label: key ? regionGroupLabel(key) : '未设置地区', items }))
+    : [{ key: '__all__', label: '', items: visible }]
+  // Lumina 卡片自带紧凑排版，紧凑模式只作用于经典卡片
+  const dense = density === 'dense' && activeTheme !== 'lumina'
   const hasSpeed = servers.some((server) => server.upload_speed !== undefined || server.download_speed !== undefined)
   const totalUpload = servers.reduce((sum, server) => sum + (server.upload_speed || 0), 0)
   const totalDownload = servers.reduce((sum, server) => sum + (server.download_speed || 0), 0)
+  const globeRegions = servers.map(probeRegion).filter(Boolean)
+  const showGlobe = !!data.show_globe && globeRegions.length > 0
+  // 旗帜、国家代码两种写法按国家代码去重（同一地区有的机器只报旗帜）
+  const regionCount = new Set(globeRegions.map((value) => globeCountryCode(value) || value.trim().toUpperCase())).size
+  const assets = assetStats(servers)
+  const connections = connectionTotals(servers)
+  // 主控 v0.6.1-beta.3 起公开日流量放宽到 14 天，柱状图跟着显示 14 根；旧主控只有 7 天时照实显示
+  const dailyTotals = dailyTrafficTotals(servers, 14)
+  const todayTraffic = dailyTotals.at(-1)?.total
+  const recentTraffic = dailyTotals.reduce((sum, day) => sum + day.total, 0)
+  const quota = quotaSummary(servers)
+  // 续费格右栏列出最近到期的三台
+  const expiries = upcomingExpiries(servers)
+  const quality = networkQuality(servers)
+  const monthlyTotal = servers.reduce((sum, server) => { const cost = monthlyCost(server); return cost > 0 && !isPermanent(server) ? sum + cost : sum }, 0)
+  const nearest = servers
+    .map((server) => ({ server, at: expiryTimestamp(server) }))
+    .filter((item): item is { server: ProbeServer; at: number } => item.at !== undefined && item.at >= Date.now())
+    .sort((a, b) => a.at - b.at)[0]
+  const peakDown = Math.max(0, ...speedSamples.map((item) => item.down))
+  const peakUp = Math.max(0, ...speedSamples.map((item) => item.up))
+  const qualityBar = (q: NonNullable<typeof quality>) => {
+    const parts = [{ value: q.good, tone: 'ok', label: '优' }, { value: q.medium, tone: 'warn', label: '中' }, { value: q.poor, tone: 'bad', label: '差' }]
+    const total = parts.reduce((sum, part) => sum + part.value, 0)
+    return <span className="kpi-quality-bar">{total > 0 && parts.map((part) => part.value > 0 && <i key={part.tone} className={part.tone} title={`${part.label} ${part.value}`} style={{ width: `${(part.value / total) * 100}%` }} />)}</span>
+  }
+  const dailyMax = Math.max(1, ...dailyTotals.map((day) => day.total))
+  const kpis = [
+    <Kpi
+      key="servers"
+      icon={<Server size={14} />}
+      label="服务器"
+      value={<><em className="online">{onlineCount}</em><span className="kpi-unit"> / {servers.length} 在线</span></>}
+      sub={<>离线 <b className={offlineCount > 0 ? 'offline' : ''}>{offlineCount}</b> · 告警 <b className={alertCount > 0 ? 'offline' : ''}>{alertCount}</b>{regionCount > 0 && ` · ${regionCount} 个地区`}</>}
+      active={filter === 'all'}
+      onClick={() => selectFilter('all')}
+    />,
+    hasSpeed && (
+      <Kpi
+        key="speed"
+        icon={<Activity size={14} />}
+        label="实时网速"
+        className="speed-cell"
+        value={<FitText fitKey={`${networkSpeed(totalDownload)}|${networkSpeed(totalUpload)}`} minPx={10} className="kpi-speed"><span className="down">↓ {networkSpeed(totalDownload)}</span>{' '}<span className="up">↑ {networkSpeed(totalUpload)}</span></FitText>}
+        sub={speedSamples.length > 1
+          ? <FitText fitKey={`${networkSpeed(peakDown)}|${networkSpeed(peakUp)}`}><span className="fit-drop">峰值 </span>↓ {networkSpeed(peakDown)} · ↑ {networkSpeed(peakUp)}</FitText>
+          : '全部服务器合计'}
+        title={speedSamples.length > 1 ? `全部服务器合计；曲线和峰值为本页打开后近 3 分钟` : undefined}
+        aside={speedSamples.length > 1 && <KpiSpark series={[{ values: speedSamples.map((item) => item.down), tone: 'down' }, { values: speedSamples.map((item) => item.up), tone: 'up' }]} height={68} />}
+      />
+    ),
+    connections && (
+      <Kpi
+        key="connections"
+        icon={<Network size={14} />}
+        label="连接数"
+        value={connections.total.toLocaleString('en-US')}
+        sub={`TCP ${connections.tcp.toLocaleString('en-US')} · UDP ${connections.udp.toLocaleString('en-US')}`}
+        aside={connections.tcpHistory && connections.tcpHistory.length > 1 && <KpiSpark series={[{ values: connections.tcpHistory, tone: 'tcp' }, { values: connections.udpHistory ?? [], tone: 'udp' }]} height={68} />}
+      />
+    ),
+    todayTraffic !== undefined && (
+      <Kpi
+        key="today"
+        icon={<ChartColumn size={14} />}
+        label="今日流量"
+        value={bytes(todayTraffic, false)}
+        sub={`近 ${dailyTotals.length} 天 ${bytes(recentTraffic, false)}`}
+        title={dailyTotals.map((day) => `${day.date.slice(5)} ${bytes(day.total, false)}`).join('\n')}
+        aside={<span className="kpi-columns">{dailyTotals.map((day, index) => <i key={day.date} className={index === dailyTotals.length - 1 ? 'today' : undefined} style={{ height: `${Math.max(4, (day.total / dailyMax) * 100)}%` }} />)}</span>}
+      />
+    ),
+    (quota || quality) && (
+      <Kpi
+        key="quota"
+        icon={<Gauge size={14} />}
+        label={quota && quality ? '本期流量额度 · 网络质量' : quota ? '本期流量额度' : '网络质量'}
+        value={<span className="kpi-pair">{quota && <span>{quota.pct.toFixed(0)}%</span>}{quality && <span>{quality.latency.toFixed(0)}<span className="kpi-unit"> ms</span></span>}</span>}
+        sub={<span className="kpi-quota-line">
+          {quota && <>
+            <span className="kpi-mini-bar"><i className={meterTone(quota.pct) ?? undefined} style={{ width: `${Math.min(100, quota.pct)}%` }} /></span>
+            <span>{bytes(quota.used, false)} / {bytes(quota.limit, false)}</span>
+          </>}
+          {quality && <>
+            {qualityBar(quality)}
+            {quality.loss !== undefined && <span>丢包 {quality.loss.toFixed(1)}%</span>}
+          </>}
+        </span>}
+        title={[
+          quota && `本期流量额度：设了限额的 ${quota.count} 台合计 ${bytes(quota.used, false)} / ${bytes(quota.limit, false)}${quota.over80 ? `，${quota.over80} 台超 80%` : ''}`,
+          quality && `网络质量：在线服务器近 1 小时平均延迟 ${quality.latency.toFixed(0)} ms${quality.loss !== undefined ? `、丢包 ${quality.loss.toFixed(1)}%` : ''}；优 ${quality.good} · 中 ${quality.medium} · 差 ${quality.poor}（丢包 ≥10% 或延迟 ≥250ms 为差，丢包 ≥3% 或延迟 ≥120ms 为中）`,
+        ].filter(Boolean).join('\n')}
+      />
+    ),
+    hasExpiry && (
+      <Kpi
+        key="renewal"
+        icon={<Wallet size={14} />}
+        label="续费"
+        value={<><em className={renewalCount > 0 ? 'warn' : undefined}>{renewalCount}</em><span className="kpi-unit"> 台 30 天内到期</span></>}
+        sub={<>
+          {[`¥${renewalAmount.toFixed(2)}`, monthlyTotal > 0 && `月均 ¥${monthlyTotal.toFixed(0)}`].filter(Boolean).join(' · ')}
+          {/* 右栏列出最近到期的几台时不重复；格子太窄、右栏隐藏时才显示 */}
+          {nearest && <span className="kpi-nearest"> · 最近 {nearest.server.name || '未命名服务器'} {Math.max(0, Math.ceil((nearest.at - Date.now()) / 86400000))} 天</span>}
+        </>}
+        aside={expiries.length > 0 && <span className="kpi-expiry-list">{expiries.map((item, index) => <span key={`${item.name}-${index}`}><span>{item.name || '未命名服务器'}</span><span className={item.days < 0 ? 'gone' : item.days <= 7 ? 'soon' : undefined}>{item.days < 0 ? `过期 ${-item.days} 天` : `${item.days} 天`}</span></span>)}</span>}
+        title={assets ? `剩余价值 ${formatMoney(assets.totalValue, 'CNY', true)} · 覆盖 ${assets.priced} / ${servers.length} 台` : undefined}
+        active={filter === 'renewal'}
+        onClick={() => selectFilter('renewal')}
+      />
+    ),
+  ].filter(Boolean)
+  const kpiCols = kpiColumns(kpis.length, kpiWidth)
+  const renderCard = (server: ProbeServer, index: number) => {
+    const name = server.name || `服务器 ${index + 1}`
+    return activeTheme === 'lumina'
+      ? <LazyCard key={server.name || index} className="server-card lumina-card" name={name} estimatedHeight={648}><ServerCardLumina server={server} index={index} /></LazyCard>
+      : <LazyCard key={server.name || index} className={`server-card probe-card${dense ? ' dense' : ''}`} name={name} estimatedHeight={!server.online ? 136 : dense ? 200 : activeTheme === 'anime' ? 495 : 462}><ServerCard server={server} index={index} dense={dense} /></LazyCard>
+  }
   return (
     <div className='app-shell'>
       <header className="topbar">
         <div>
           {data.logo && <img src={data.logo} alt="" />}
           <h1>{title}</h1>
+          {!isLuminaTheme && <ProbeHeaderLicense badges={data.license_badge} />}
         </div>
         <nav>
           <PasskeyLogin />
@@ -1534,167 +1551,110 @@ function ProbeApp({ data, error }: ReturnType<typeof useProbe>) {
           <ThemeSelect value={theme} onChange={(name) => { setTheme(name); setThemeState(name); setActiveTheme(name ?? getActiveTheme()) }} />
         </nav>
       </header>
-      <section className="dashboard-summary">
-        <article className={`summary-card collapse-card${summaryCollapsed.has('nodes') ? ' collapsed' : ' open'}`}>
-          <button
-            className="summary-toggle"
-            type="button"
-            aria-expanded={!summaryCollapsed.has('nodes')}
-            aria-label={summaryCollapsed.has('nodes') ? '展开节点情况' : '折叠节点情况'}
-            onClick={() => toggleSummary('nodes')}
-          >
-            <span>
-              <Server size={18} />
-              节点情况
-            </span>
-            <span className="summary-toggle-info">
-              {summaryCollapsed.has('nodes') && (
-                <>
-                  <b>{servers.length} 总</b>
-                  <b className="ok">{onlineCount} 在线</b>
-                  <b className="bad">{servers.length - onlineCount} 离线</b>
-                  {hasExpiry && (
-                    <em>
-                      <CalendarClock size={12} />
-                      待续费 {renewalCount}
-                    </em>
-                  )}
-                </>
-              )}
-              <ChevronDown size={17} />
-            </span>
-          </button>
-          {!summaryCollapsed.has('nodes') && (
-            <div className="collapse-body">
-              <div className="node-stats">
-                <button onClick={() => setFilter('all')}>
-                  <strong>{servers.length}</strong>
-                  <span>
-                    <Server size={14} />
-                    总节点
-                  </span>
-                </button>
-                <button onClick={() => setFilter('online')} className="online">
-                  <strong>{onlineCount}</strong>
-                  <span>
-                    <CheckCircle2 size={14} />
-                    在线节点
-                  </span>
-                </button>
-                <button onClick={() => setFilter('offline')} className="offline">
-                  <strong>{servers.length - onlineCount}</strong>
-                  <span>
-                    <XCircle size={14} />
-                    离线节点
-                  </span>
-                </button>
+      {servers.length > 0 && (
+        <section className={`overview${showGlobe ? ' with-globe' : ''}`}>
+          <div className="kpi-panel"><div ref={kpiGridRef} className={kpiCols === 2 && kpiWidth > 0 && kpiWidth < 640 ? 'kpi-grid two-col' : 'kpi-grid'} style={{ gridTemplateColumns: `repeat(${kpiCols}, minmax(0, 1fr))` }}>{kpis}</div></div>
+          {showGlobe && (
+            <aside className="globe-card globe-mini" aria-label="地区分布">
+              <div className="globe-mini-stage">
+                <Suspense fallback={<div className="globe-loading">加载中…</div>}>
+                  <RegionGlobe regions={globeRegions} compact />
+                </Suspense>
               </div>
-            </div>
+            </aside>
           )}
-        </article>
-        {hasSpeed && (
-          <article className={`summary-card collapse-card${summaryCollapsed.has('network') ? ' collapsed' : ' open'}`}>
-            <button
-              className="summary-toggle"
-              type="button"
-              aria-expanded={!summaryCollapsed.has('network')}
-              aria-label={summaryCollapsed.has('network') ? '展开网络情况' : '折叠网络情况'}
-              onClick={() => toggleSummary('network')}
-            >
-              <span>
-                <Gauge size={18} />
-                网络情况
-              </span>
-              <span className="summary-toggle-info">
-                {summaryCollapsed.has('network') && (
-                  <>
-                    <b>↓{networkSpeed(totalDownload)}</b>
-                    <b>↑{networkSpeed(totalUpload)}</b>
-                  </>
-                )}
-                <ChevronDown size={17} />
-              </span>
-            </button>
-            {!summaryCollapsed.has('network') && (
-              <div className="collapse-body">
-                <div className="network-stats">
-                  <SpeedSummary label="总下行网速" value={totalDownload} direction="down" />
-                  <SpeedSummary label="总上行网速" value={totalUpload} direction="up" />
-                </div>
-              </div>
-            )}
-          </article>
-        )}
-        <AssetsSummary servers={servers} />
-      </section>
+        </section>
+      )}
       <div className="globe-row">
-        {data.show_globe && regions.length > 0 && (
-          <section className={`globe-card ${globeOpen ? 'open' : ''}`}>
-            <button className="globe-toggle" type="button" aria-expanded={globeOpen} onClick={() => setGlobeOpen((value) => !value)}>
-              <span>
-                <Globe2 size={18} />
-                地区分布
-              </span>
-              <span>
-                {regions.length} 个地区
-                <ChevronDown size={17} />
-              </span>
-            </button>
-            {globeOpen && (
-              <Suspense fallback={<div className="globe-loading">正在加载国界数据…</div>}>
-                <RegionGlobe regions={servers.map((server) => server.region_country || server.region || '').filter(Boolean)} />
-              </Suspense>
-            )}
-          </section>
-        )}
-        <Leaderboard servers={servers} />
+        <Leaderboard servers={servers} open={boardsOpen} onToggle={() => setBoardsOpen((value) => !value)} />
+        <Leaderboard servers={servers} open={boardsOpen} onToggle={() => setBoardsOpen((value) => !value)} initialTab={LEADERBOARD_ORDER[1]} secondary />
       </div>
       <ForwardOverview data={data} />
       <section className="probe-toolbar">
         <div className="filters">
-          <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
-            全部 {servers.length}
-          </button>
-          <button className={filter === 'online' ? 'active' : ''} onClick={() => setFilter('online')}>
-            在线 {onlineCount}
-          </button>
-          <button className={filter === 'offline' ? 'active' : ''} onClick={() => setFilter('offline')}>
-            离线 {servers.length - onlineCount}
-          </button>
-          {hasExpiry && (
-            <>
-              <button className={filter === 'renewal' ? 'active warning' : 'warning'} onClick={() => setFilter('renewal')}>
-                待续费 {renewalCount}
-              </button>
-              <button className={filter === 'expiring' ? 'active warning' : 'warning'} onClick={() => setFilter('expiring')}>
-                即将到期 {expiringCount}
-              </button>
-              <button className={filter === 'expired' ? 'active danger' : 'danger'} onClick={() => setFilter('expired')}>
-                已到期 {expiredCount}
-              </button>
-            </>
-          )}
-          {regions.length > 0 && (
-            <RegionSelect regions={regions} value={region} onChange={setRegion} />
-          )}
           <label className="server-search">
             <Search size={14} />
             <input
               type="search"
               aria-label="搜索节点"
-              placeholder="搜索节点…"
+              placeholder="搜索服务器…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
+          <div className="filter-seg" role="group" aria-label="状态筛选">
+            {([
+              ['all', '全部', servers.length, ''],
+              ['online', '在线', onlineCount, ''],
+              ['offline', '离线', offlineCount, offlineCount > 0 ? 'bad' : ''],
+              ...(hasMetrics ? [['alert', '告警', alertCount, alertCount > 0 ? 'bad' : '']] : []),
+              ...(hasExpiry ? [
+                ['renewal', '待续费', renewalCount, renewalCount > 0 ? 'warn' : ''],
+                ['expiring', '即将到期', expiringCount, expiringCount > 0 ? 'warn' : ''],
+                ['expired', '已到期', expiredCount, expiredCount > 0 ? 'bad' : ''],
+              ] : []),
+            ] as Array<[ProbeFilter, string, number, string]>).map(([key, label, count, tone]) => (
+              <button
+                key={key}
+                type="button"
+                className={filter === key ? 'active' : ''}
+                aria-pressed={filter === key}
+                title={key === 'alert' ? `CPU、内存、硬盘或计费用量超过 ${PROBE_ALERT_PCT}%` : undefined}
+                onClick={() => selectFilter(key)}
+              >
+                {label} <span className={`filter-count${tone ? ` ${tone}` : ''}`}>{count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="toolbar-end">
+            {regions.length > 0 && <RegionSelect regions={regions} value={region} onChange={setRegion} />}
+            <label className="toolbar-select">
+              排序
+              <select aria-label="排序" value={sortKey} onChange={(event) => setSortKey(event.target.value as ProbeSortKey)}>
+                {PROBE_SORT_KEYS.map((key) => <option value={key} key={key}>{PROBE_SORT_LABELS[key]}</option>)}
+              </select>
+            </label>
+            {view === 'card' && regions.length > 0 && (
+              <label className="toolbar-select">
+                分组
+                <select aria-label="分组" value={groupBy} onChange={(event) => setGroupBy(event.target.value as ProbeGroupBy)}>
+                  <option value="none">不分组</option>
+                  <option value="region">按地区</option>
+                </select>
+              </label>
+            )}
+            {view === 'card' && activeTheme !== 'lumina' && (
+              <span className="filter-seg density-toggle" role="group" aria-label="卡片密度">
+                <button type="button" className={density === 'standard' ? 'active' : ''} aria-pressed={density === 'standard'} onClick={() => setDensity('standard')}>标准</button>
+                <button type="button" className={density === 'dense' ? 'active' : ''} aria-pressed={density === 'dense'} onClick={() => setDensity('dense')}>紧凑</button>
+              </span>
+            )}
+          </div>
         </div>
       </section>
-      <main className={`servers ${view}`}>{visible.length ? view === 'card' ? visible.map((server) => activeTheme === 'lumina' ? <ServerCardLumina key={server.name} server={server} index={servers.indexOf(server)} /> : <ServerCard key={server.name} server={server} index={servers.indexOf(server)} />) : view === 'mini' ? visible.map((server) => <ServerMiniCard key={server.name} server={server} index={servers.indexOf(server)} expanded={miniExpanded} />) : <ServerTable servers={visible} /> : <div className="empty">暂无符合条件的服务器</div>}</main>
-      <footer>
-        Powered by{' '}
-        <a href="https://github.com/mmwx-group" target="_blank" rel="noreferrer">
-          MMWX Group
-        </a>
+      <main className={`servers ${view}${view === 'card' ? ' grouped' : ''}`}>
+        {visible.length ? view === 'card' ? groups.map((group) => (
+          <section key={group.key} className="server-group">
+            {grouped && (
+              <h2 className="group-heading">
+                <Twemoji>{group.label}</Twemoji>
+                <small>{group.items.length} 台</small>
+              </h2>
+            )}
+            <div className={dense ? 'server-grid dense' : 'server-grid'}>
+              {group.items.map(({ server, index }) => renderCard(server, index))}
+            </div>
+          </section>
+        )) : view === 'mini' ? visible.map(({ server, index }) => <ServerMiniCard key={server.name || index} server={server} index={index} expanded={miniExpanded} />) : <ServerTable servers={visible.map(({ server }) => server)} /> : <div className="empty">暂无符合条件的服务器</div>}
+      </main>
+      <footer className="probe-credit-footer">
+        <span>Powered by <a href="https://github.com/chnnic/jiwo-probe" target="_blank" rel="noreferrer">Jiwo Probe</a></span>
+        <span>
+          Powered by{' '}
+          <a href="https://github.com/mmwx-group" target="_blank" rel="noreferrer">
+            MMWX Group
+          </a>
+        </span>
       </footer>
       {/* 许可证放在页面末尾并带动画开关（与 LuminaPlus、Premium 一致）；开关按主题分别记忆 */}
       <ProbeLicenseBar badges={data.license_badge} storageKey={`jiwo-${activeTheme}-license-anim`} className="probe-license-bar" toggleClassName="probe-license-toggle" />

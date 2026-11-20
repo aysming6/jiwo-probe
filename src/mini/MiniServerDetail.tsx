@@ -1,3 +1,4 @@
+import { ProviderLogo } from '../ProviderLogo'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
@@ -9,6 +10,7 @@ import { ConnectionLabel } from '../ConnectionLabel'
 import { connectionCount } from '../unlocks'
 import { useNetworkSpeed } from '../use-network-speed'
 import { computeMonthlyTrafficCost, computeRemainingValue, formatMoney } from '../value'
+import { isOneTimeTraffic } from '../traffic-display'
 import { serverHealth } from '../server-health'
 import { Twemoji } from '../Twemoji'
 import { averageLatency, ratio, validNumber } from './mini-model'
@@ -40,7 +42,7 @@ export default function MiniServerDetail({ server, index, onClose, showHealthSco
   const name = server.name || `服务器 ${index + 1}`
   const flag = regionFlag(server.region || server.region_country)
   const latency = averageLatency(server)
-  const period = server.period_start && server.period_end ? `${server.period_start} ～ ${server.period_end}` : '未设置'
+  const period = isOneTimeTraffic(server) ? '一次性流量（不重置）' : server.period_start && server.period_end ? `${server.period_start} ～ ${server.period_end}` : '未设置'
   const quota = server.traffic_limit === 0 ? '不限' : size(server.traffic_limit)
   const monthly = computeMonthlyTrafficCost(server)
   const remaining = computeRemainingValue(server)
@@ -62,7 +64,7 @@ export default function MiniServerDetail({ server, index, onClose, showHealthSco
     ['网卡累计 上 / 下', `${size(server.cumulative_up)} / ${size(server.cumulative_down)}`],
     ['累计总流量', size(total)], ['到期时间', isPermanent(server) ? '永久' : server.expires_at || '未设置'],
     ['续费价格', renewal],
-    ['每月每 TB 费用', isPermanent(server) ? '不适用（永久买断）' : monthly ? `${monthly.perTB > 0 && monthly.perTB < .01 ? '< ' : ''}${formatMoney(monthly.perTB > 0 && monthly.perTB < .01 ? .01 : monthly.perTB, monthly.currency, monthly.isCny, true)} / TB / 月（${monthly.currency}）` : '无法计算'],
+    ['每月每 TB 费用', isPermanent(server) ? '不适用（永久买断）' : isOneTimeTraffic(server) ? '不适用（一次性流量）' : monthly ? `${monthly.perTB > 0 && monthly.perTB < .01 ? '< ' : ''}${formatMoney(monthly.perTB > 0 && monthly.perTB < .01 ? .01 : monthly.perTB, monthly.currency, monthly.isCny, true)} / TB / 月（${monthly.currency}）` : '无法计算'],
     ...(remaining ? [['剩余价值（估算）', formatMoney(remaining.value, remaining.currency, remaining.isCny)] as [string, ReactNode]] : []),
   ]
 
@@ -85,7 +87,7 @@ export default function MiniServerDetail({ server, index, onClose, showHealthSco
     }}>
       <header className="mini-detail-header">
         <div className="mini-detail-heading"><i className={`mini-status-dot${server.online ? '' : ' is-offline'}`} /><h2 id={`${id}-title`} title={name}><Twemoji>{flag && !hasLeadingFlag(name) ? `${flag} ${name}` : name}</Twemoji></h2><button type="button" className="mini-detail-close" aria-label="关闭详情" onClick={onClose}><X size={22} /></button></div>
-        <div className="mini-detail-subtitle"><span>{server.provider_name || '未标注服务商'}</span>{regionLabel(server) && <span>{regionLabel(server)}</span>}<span>{server.online ? '在线' : '离线'} · {duration(server.uptime)}</span></div>
+        <div className="mini-detail-subtitle"><span><ProviderLogo path={server.provider_logo} size={14} style={{ marginRight: 5, verticalAlign: '-2px' }} />{server.provider_name || '未标注服务商'}</span>{regionLabel(server) && <span>{regionLabel(server)}</span>}<span>{server.online ? '在线' : '离线'} · {duration(server.uptime)}</span></div>
       </header>
       <div className="mini-detail-tablist" role="tablist" aria-label="服务器详情项目">
         {tabs.map((item, slot) => <button type="button" key={item.key} role="tab" id={`${id}-tab-${item.key}`} aria-controls={`${id}-panel-${item.key}`} aria-selected={tab === item.key} tabIndex={tab === item.key ? 0 : -1} onClick={() => setTab(item.key)} onKeyDown={event => {

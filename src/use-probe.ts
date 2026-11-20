@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProbeAppearance, ProbeBackgroundAppearance, ProbePayload, ProbeServer, ThemeName } from './types'
 import { controllerPingGroups, DEFAULT_PING_GROUP_CONFIG, parsePingGroupConfig, type PingGroupConfig } from './ping-groups'
@@ -7,11 +7,15 @@ import { canonicalThemeOverride, parseThemeName } from './theme-name'
 import { isLuminaPlusModeSetting, LUMINAPLUS_COLOR_KEY, LUMINAPLUS_MODE_KEY, LUMINAPLUS_PALETTE_KEY, resolveLuminaPlusAppearance, type LuminaPlusModeSetting, type LuminaPlusPalette } from './luminaplus/luminaplus-color'
 import { DEFAULT_SHOW_CONNECTION_CHART, parseShowConnectionChart } from './connection-chart'
 import { applyProbeDelta, isProbeDeltaFrame } from './probe-delta'
+import { readProbeSnapshot, rememberProbeSnapshot, staleSnapshot } from './probe-snapshot-cache'
+import { SETUP_ERROR_HEADER, setupErrorMessage } from './probe-setup'
 export { isBuiltinTheme, parseThemeName } from './theme-name'
 
 const APPEARANCE_CACHE = 'mmwx-probe-appearance'
 const DARK_OVERRIDE = 'mmwx-probe-dark-override'
 const THEME_OVERRIDE = 'mmwx-probe-theme-override'
+/** 哪吒主题访客的明暗选择：light / dark；不存在表示跟随系统 */
+export const NEZHA_MODE_KEY = 'jiwo-nezha-mode'
 let runtimeBackground: ProbeBackgroundAppearance | undefined
 let runtimePingGroups = DEFAULT_PING_GROUP_CONFIG
 let runtimeNetworkSpeedUnit = DEFAULT_NETWORK_SPEED_UNIT
@@ -230,6 +234,12 @@ export function applyAppearance(input?: ProbeAppearance) {
     dark = look.mode === 'dark'
     paper = look.palette === 'paper'
     mint = look.palette === 'mint'
+  } else if (theme === 'nezha') {
+    // 哪吒主题：访客手动选的明暗（jiwo-nezha-mode）优先；主控写 nezha-light / nezha-dark 固定明暗；都没有时跟随系统
+    const saved = (() => { try { return localStorage.getItem(NEZHA_MODE_KEY) } catch { return null } })()
+    if (saved === 'light' || saved === 'dark') dark = saved === 'dark'
+    else if (parsed.light !== undefined) dark = !parsed.light
+    else dark = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches
   } else if (theme === 'premium') {
     const premiumMode = localStorage.getItem('premium-probe-color-mode')
     if (premiumMode === 'platinum') {
@@ -324,6 +334,24 @@ export function followControllerLuminaPlusAppearance() {
   applyAppearance()
 }
 
+/** 哪吒主题：访客选浅色 / 深色，传 null 表示跟随系统 */
+export function setNezhaMode(mode: 'light' | 'dark' | null) {
+  try {
+    if (mode) localStorage.setItem(NEZHA_MODE_KEY, mode)
+    else localStorage.removeItem(NEZHA_MODE_KEY)
+  } catch { /* 隐私模式下只在本页生效 */ }
+  applyAppearance()
+}
+
+export function getNezhaMode(): 'light' | 'dark' | null {
+  try {
+    const saved = localStorage.getItem(NEZHA_MODE_KEY)
+    return saved === 'light' || saved === 'dark' ? saved : null
+  } catch {
+    return null
+  }
+}
+
 export function setDarkOverride(mode: 'dark' | 'light' | 'gold' | 'platinum' | null) {
   if (mode) {
     localStorage.setItem(DARK_OVERRIDE, mode)
@@ -402,12 +430,23 @@ export interface ProbeState {
   error?: string
   /** 最近一次收到数据的时间（毫秒时间戳），用于提示主控断联时页面数据有多旧 */
   updatedAt?: number
+  /** 正在显示稍早的数据（本机缓存的上次快照，或 Worker 冷启动时给的上一份快照），实时数据还没到 */
+  fromSnapshot: boolean
   pingGroups: PingGroupConfig
   networkSpeedUnit: NetworkSpeedUnit
   connectionChartEnabled: boolean | undefined
 }
 
+declare global {
+  interface Window {
+    /** index.html 里提前发出的首帧请求，只用一次。 */
+    __probeFirstFetch?: Promise<Response | null>
+  }
+}
+
 const HIDDEN_PAUSE_MS = 60_000
+// 首帧 HTTP 迟迟没回来时，最多等这么久就连 WS，由 WS 兜底拿数据。
+const WS_CONNECT_FALLBACK_MS = 3_000
 const RECONNECT_DELAYS_MS = [2_000, 5_000, 15_000, 30_000]
 
 const ProbeContext = createContext<ProbeState | null>(null)
@@ -416,6 +455,7 @@ function useProbeConnection(): ProbeState {
   const [data, setData] = useState<ProbePayload>()
   const [error, setError] = useState<string>()
   const [updatedAt, setUpdatedAt] = useState<number>()
+  const [fromSnapshot, setFromSnapshot] = useState(false)
   const [pingGroups, setPingGroups] = useState(runtimePingGroups)
   const [networkSpeedUnit, setNetworkSpeedUnit] = useState(runtimeNetworkSpeedUnit)
   const [connectionChartEnabled, setConnectionChartEnabled] = useState(runtimeConnectionChartEnabled)
@@ -434,20 +474,45 @@ function useProbeConnection(): ProbeState {
     let reconnectTimer: number | undefined
     let reconnectAttempt = 0
 
-    const accept = (payload: ProbePayload) => {
-      if (stopped) return
+    let liveFrameSeen = false
+    // 已显示的快照（IndexedDB 或 Worker 给的旧快照）的时间，只让更新的那份顶替
+    let shownSnapshotAt = 0
+
+    const display = (payload: ProbePayload, receivedAt: number) => {
       applyAppearance(payload.appearance)
       applyFavicon(payload.icon)
       const visiblePayload = applyPayloadVisibility(enrichPayload(payload))
       setData(visiblePayload)
-      setError(undefined)
-      setUpdatedAt(Date.now())
+      setUpdatedAt(receivedAt)
       if (payload.title) document.title = payload.title
+    }
+    const accept = (payload: ProbePayload) => {
+      if (stopped) return
+      liveFrameSeen = true
+      display(payload, Date.now())
+      setError(undefined)
+      setFromSnapshot(false)
+      rememberProbeSnapshot(payload)
     }
     const poll = async () => {
       try {
-        const response = await fetch('/api/probe', { cache: 'no-store' })
+        const firstFetch = window.__probeFirstFetch
+        window.__probeFirstFetch = undefined
+        const response = await firstFetch ?? await fetch('/api/probe', { cache: 'no-store' })
+        const missingSetup = response.headers.get(SETUP_ERROR_HEADER)
+        if (missingSetup) throw new Error(setupErrorMessage(missingSetup))
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        // 冷启动时 Worker 先给上一份快照（X-Probe-Stale-Age 为它的秒数），按「上次的数据」显示，不算实时帧
+        const staleAge = Number(response.headers.get('X-Probe-Stale-Age'))
+        if (response.headers.has('X-Probe-Stale-Age') && Number.isFinite(staleAge) && staleAge > 0) {
+          const snapshot = staleSnapshot(await response.json() as ProbePayload, Date.now() - staleAge * 1000)
+          if (stopped || liveFrameSeen || !snapshot || snapshot.savedAt <= shownSnapshotAt) return
+          shownSnapshotAt = snapshot.savedAt
+          display(snapshot.payload, snapshot.savedAt)
+          setError(undefined)
+          setFromSnapshot(true)
+          return
+        }
         accept(await response.json() as ProbePayload)
       } catch (cause) {
         if (!stopped) setError(cause instanceof Error ? cause.message : String(cause))
@@ -460,9 +525,9 @@ function useProbeConnection(): ProbeState {
       }
     }
     const startPolling = () => {
-      if (stopped || paused || timer.current) return
-      void poll()
+      if (stopped || paused || timer.current) return undefined
       timer.current = window.setInterval(poll, 5000)
+      return poll()
     }
 
     applyAppearance()
@@ -489,8 +554,8 @@ function useProbeConnection(): ProbeState {
       if (stopped || paused || wsRef.current) return
       try {
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-        // delta=1：声明支持增量帧（见 probe-delta.ts），基准是这条连接上一帧还原出的完整数据
-        const ws = new WebSocket(`${protocol}//${location.host}/api/stream?delta=1`)
+        // delta=2：声明支持第 2 版增量帧（见 probe-delta.ts），基准是这条连接上一帧还原出的完整数据
+        const ws = new WebSocket(`${protocol}//${location.host}/api/stream?delta=2`)
         let base: ProbePayload | undefined
         wsRef.current = ws
         ws.onmessage = (event) => {
@@ -552,8 +617,19 @@ function useProbeConnection(): ProbeState {
       startPolling()
       connect()
     }
-    startPolling()
-    connect()
+    // 上次的快照和首帧请求同时开始，谁先到先显示；实时数据一旦到了，快照就不再用。
+    void readProbeSnapshot().then((snapshot) => {
+      if (!snapshot || stopped || liveFrameSeen || snapshot.savedAt <= shownSnapshotAt) return
+      shownSnapshotAt = snapshot.savedAt
+      display(snapshot.payload, snapshot.savedAt)
+      setFromSnapshot(true)
+    })
+    // WS 连上后主控也会先推一整份快照，和首帧 HTTP 同时下载只会互相抢带宽，所以等首帧到了再连。
+    const wsFallbackTimer = window.setTimeout(connect, WS_CONNECT_FALLBACK_MS)
+    void startPolling()?.finally(() => {
+      window.clearTimeout(wsFallbackTimer)
+      connect()
+    })
     document.addEventListener('visibilitychange', onVisibilityChange)
     if (document.visibilityState === 'hidden') onVisibilityChange()
 
@@ -571,6 +647,7 @@ function useProbeConnection(): ProbeState {
 
     return () => {
       stopped = true
+      window.clearTimeout(wsFallbackTimer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       if (hiddenTimer !== undefined) window.clearTimeout(hiddenTimer)
       disconnect()
@@ -581,7 +658,12 @@ function useProbeConnection(): ProbeState {
     }
   }, [])
 
-  return { data, error, updatedAt, pingGroups: controllerPingGroups(data?.tri_isp, pingGroups), networkSpeedUnit, connectionChartEnabled }
+  // 主控开了「三网延迟」就以主控选的三个代表点为准，没开才用 Cloudflare 运行时变量里的延迟组设置。
+  // 依赖用序列化后的字符串：tri_isp 每帧都是新对象，内容不变时不能让卡片重算。
+  const triIspKey = JSON.stringify(data?.tri_isp ?? null)
+  const effectivePingGroups = useMemo(() => controllerPingGroups(JSON.parse(triIspKey), pingGroups), [pingGroups, triIspKey])
+
+  return { data, error, updatedAt, fromSnapshot, pingGroups: effectivePingGroups, networkSpeedUnit, connectionChartEnabled }
 }
 
 // 全站只在 Provider 内建立一套 HTTP/WS 连接。各主题调用 useProbe() 时只读取

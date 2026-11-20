@@ -1,3 +1,4 @@
+import { ProviderLogo } from '../ProviderLogo'
 import { ArrowDown, ArrowUp, CalendarDays, Cpu, Database, Gauge, Globe2, HardDrive, Hourglass, MemoryStick, RefreshCw, Wallet } from 'lucide-react'
 import { memo, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react'
 import type { ProbeServer } from '../types'
@@ -11,7 +12,7 @@ import { connectionCount } from '../unlocks'
 import { Twemoji } from '../Twemoji'
 import { useNetworkSpeed } from '../use-network-speed'
 import { averageLatency, ratio, validNumber } from '../mini/mini-model'
-import { trafficRuleLabel, trafficUsageLabel } from '../traffic-display'
+import { isOneTimeTraffic, trafficRuleLabel, trafficUsageLabel } from '../traffic-display'
 import { filledSegments, loadMetric, quotaMetric, resetDays, speedTone, combinedSpeedTrail, type LuminaPlusView, type SpeedTrail } from './luminaplus-model'
 import { SpeedPulse } from './SpeedPulse'
 import { LuminaPlusTrafficPopover } from './LuminaPlusTrafficPopover'
@@ -19,6 +20,7 @@ import { trafficWeek } from './luminaplus-traffic'
 import { CYCLE_LABELS, EXPIRING_DAYS, expiryDateLabel, expiryDays, isPermanent } from '../renewal'
 import { SystemTrendChart, TrafficDialog } from '../deferred'
 import { ProbeHistoryDialog } from '../components/ProbeHistoryDialog'
+import { LazyCard } from '../LazyCard'
 
 export const size = (value?: number) => validNumber(value) === undefined ? '—' : bytes(value)
 const percent = (value?: number) => validNumber(value) === undefined ? '—' : `${value!.toFixed(1)}%`
@@ -41,7 +43,9 @@ type TrendKind = 'cpu' | 'mem' | 'disk' | 'traffic'
 const RESOURCE_TREND: Record<string, Exclude<TrendKind, 'traffic'>> = { CPU: 'cpu', 内存: 'mem', 磁盘: 'disk' }
 const TREND_TITLE: Record<Exclude<TrendKind, 'traffic'>, string> = { cpu: 'CPU 使用率历史', mem: '内存使用率历史', disk: '磁盘使用率历史' }
 
-function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; index: number; view: LuminaPlusView; trail?: SpeedTrail }) {
+type LuminaPlusCardProps = { server: ProbeServer; index: number; view: LuminaPlusView; trail?: SpeedTrail }
+
+function LuminaPlusCardBody({ server, index, view, trail }: LuminaPlusCardProps) {
   const formatSpeed = useNetworkSpeed()
   const name = server.name || `服务器 ${index + 1}`
   // 点 CPU / 内存 / 磁盘看系统趋势，点流量看原始上下行日流量趋势；负载主控没有历史，不可点
@@ -93,7 +97,7 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
     const today = trafficWeek(server).today
     const latency = averageLatency(server)
     return <article className={`lp-list-row${server.online ? '' : ' is-offline'}`} aria-label={name}>
-      <div className="lp-list-identity"><a href={`#/server/${index}`} className="lp-name" title={`${name} · 查看详情`}><i className="lp-status" aria-label={server.online ? '在线' : '离线'} />{flag && <Twemoji>{flag}</Twemoji>}<h2>{name}</h2></a><small>{country || '地区未知'} · {server.provider_name || '服务商未上报'}</small>{server.return_routes && <div className="lp-routes" role="group" aria-label="电信、联通、移动回程"><ReturnRouteBadges routes={server.return_routes} telecomPaidPeer={server.telecom_paid_peer} variant="lumina" /></div>}</div>
+      <div className="lp-list-identity"><a href={`#/server/${index}`} className="lp-name" title={`${name} · 查看详情`}><i className="lp-status" aria-label={server.online ? '在线' : '离线'} />{flag && <Twemoji>{flag}</Twemoji>}<h2>{name}</h2></a><small>{country || '地区未知'} · <ProviderLogo path={server.provider_logo} size={14} style={{ marginRight: 4, verticalAlign: '-2px' }} />{server.provider_name || '服务商未上报'}</small>{server.return_routes && <div className="lp-routes" role="group" aria-label="电信、联通、移动回程"><ReturnRouteBadges routes={server.return_routes} telecomPaidPeer={server.telecom_paid_peer} variant="lumina" /></div>}</div>
       <div className="lp-list-resources">{resources.slice(0, 3).map(item => <span key={item.label} className="lp-trend-trigger" {...trendTrigger(RESOURCE_TREND[item.label], item.label)}><span>{item.label}</span><strong>{item.value}</strong></span>)}</div>
       <div className="lp-list-network"><span className="lp-blue"><ArrowUp size={13} /><span className="lp-speed-tone" data-tone={speedTone(server.upload_speed)}>{validNumber(server.upload_speed) === undefined ? '—' : formatSpeed(server.upload_speed!)}</span></span><span className="lp-green"><ArrowDown size={13} /><span className="lp-speed-tone" data-tone={speedTone(server.download_speed)}>{validNumber(server.download_speed) === undefined ? '—' : formatSpeed(server.download_speed!)}</span></span><small className="lp-list-today lp-trend-trigger" {...trendTrigger('traffic', '日流量')} title={`今日上下行合计 ${size(today.total)}（上行 ${size(today.upload)} · 下行 ${size(today.download)}）· 点击查看日流量趋势`} aria-label={`今日上下行合计 ${size(today.total)}，查看日流量趋势`}><span aria-hidden="true"><ArrowUp size={12} /><ArrowDown size={12} /></span>{size(today.total)}</small></div>
       <div className="lp-list-connections"><LuminaPlusConnections server={server} /><small>平均延迟 <strong>{latency === undefined ? '—' : `${latency.toFixed(0)} ms`}</strong></small></div>
@@ -106,7 +110,7 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
       <a href={`#/server/${index}`} className="lp-name" title={`${name} · 查看详情`}><i className="lp-status" aria-label={server.online ? '在线' : '离线'} />{flag && <Twemoji>{flag}</Twemoji>}<h2>{name}</h2></a>
       <div className="lp-card-actions"><UnlockButton server={server} /><LuminaPlusTrafficPopover server={server} name={name} /><span className="lp-os" title={server.os || '系统未上报'}><SystemIcon server={server} /></span></div>
     </header>
-    <div className="lp-badges"><span title={country || '地区未上报'}>{country || '地区未知'}</span>{view !== 'mini' && server.provider_name && <span title={server.provider_name}>{server.provider_name}</span>}{view !== 'mini' && <span className={`lp-state-badge ${server.online ? 'is-online' : ''}`}>{server.online ? '在线' : '离线'}</span>}{view !== 'compact' && price && <span className="lp-price" title={priceTitle}><Wallet size={13} />{price}{originalPrice && <small className="lp-price-original">{originalPrice}</small>}</span>}</div>
+    <div className="lp-badges"><span title={country || '地区未上报'}>{country || '地区未知'}</span>{view !== 'mini' && server.provider_name && <span title={server.provider_name}><ProviderLogo path={server.provider_logo} size={14} style={{ marginRight: 5, verticalAlign: '-2px' }} />{server.provider_name}</span>}{view !== 'mini' && <span className={`lp-state-badge ${server.online ? 'is-online' : ''}`}>{server.online ? '在线' : '离线'}</span>}{view !== 'compact' && price && <span className="lp-price" title={priceTitle}><Wallet size={13} />{price}{originalPrice && <small className="lp-price-original">{originalPrice}</small>}</span>}</div>
     <div className="lp-resources">{resources.map(item => <div key={item.label} {...(RESOURCE_TREND[item.label] ? { className: 'lp-resource lp-trend-trigger', ...trendTrigger(RESOURCE_TREND[item.label], item.label) } : { className: 'lp-resource' })}>
       <div className="lp-resource-label"><span><item.Icon size={15} />{item.label}</span><strong>{item.value}</strong></div>
       <p title={item.note}>{item.note}</p><SegmentMeter value={item.percent} tone={item.tone} label={item.label === '负载' ? '每核归一化负载' : item.label} />
@@ -138,7 +142,7 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
       <LuminaPlusConnections server={server} />
     </section>}
     {view !== 'mini' && <div className="lp-quota lp-trend-trigger" {...trendTrigger('traffic', '日流量')} title={`${trafficUsageLabel(server)} · ${trafficRuleLabel(server)} · 点击查看日流量趋势`}>
-      <div className="lp-quota-heading"><span><Database size={14} />{quota.unlimited ? '不限流量' : quota.exceeded ? '额度已超出' : `剩余 ${size(quota.remaining)}`}{reset !== undefined && <small>· {reset === 0 ? '今天重置' : `${reset}天后重置`}</small>}</span>{view === 'compact' ? <span className="lp-quota-age" title="运行时间">{server.online ? '在线' : '离线'}：{age}</span> : <span>{size(quota.used)} / {quota.unlimited ? '不限' : size(quota.limit)}</span>}</div>
+      <div className="lp-quota-heading"><span><Database size={14} />{quota.unlimited ? '不限流量' : quota.exceeded ? '额度已超出' : `剩余 ${size(quota.remaining)}`}{reset !== undefined ? <small>· {reset === 0 ? '今天重置' : `${reset}天后重置`}</small> : isOneTimeTraffic(server) && <small>· 一次性</small>}</span>{view === 'compact' ? <span className="lp-quota-age" title="运行时间">{server.online ? '在线' : '离线'}：{age}</span> : <span>{size(quota.used)} / {quota.unlimited ? '不限' : size(quota.limit)}</span>}</div>
       <div className="lp-quota-meter"><SegmentMeter value={quota.percent} tone={quota.exceeded ? 'danger' : 'traffic'} label="已用计费额度" />{view === 'compact' && <span>{size(quota.used)} / {quota.unlimited ? '不限' : size(quota.limit)}</span>}</div>
     </div>}
     <ConnectionHistory server={server} serverIndex={index} />
@@ -151,6 +155,14 @@ function LuminaPlusCard({ server, index, view, trail }: { server: ProbeServer; i
     </div>}
     {trendDialog}
   </article>
+}
+
+const MemoLuminaPlusCardBody = memo(LuminaPlusCardBody)
+
+const ESTIMATED_HEIGHT: Record<LuminaPlusView, number> = { large: 706, compact: 580, mini: 465, list: 106 }
+
+function LuminaPlusCard(props: LuminaPlusCardProps) {
+  return <LazyCard className={props.view === 'list' ? 'lp-list-row' : 'lp-card'} name={props.server.name || `服务器 ${props.index + 1}`} estimatedHeight={ESTIMATED_HEIGHT[props.view]}><MemoLuminaPlusCardBody {...props} /></LazyCard>
 }
 
 export default memo(LuminaPlusCard)
