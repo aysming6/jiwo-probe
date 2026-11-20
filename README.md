@@ -473,14 +473,12 @@ ProbeHub 连接或快照异常时会自动回退到原来的主控直连，不�
 
 ### 自动同步上游更新
 
-fork 自带 `sync-upstream.yml` 工作流（纯 shell git 实现，零 action 依赖）：
+每天北京时间 11:23 检查 `chnnic/jiwo-probe:main`。有新提交时，工作流在本仓库创建一个来自上游分支的 PR。上游继续更新时，同一 PR 的内容随之更新。没有新提交时直接结束。
 
-- **自动**：每天北京时间 11:23 自动合并 `chnnic/jiwo-probe` 的 `main` 到你的 fork 并推送，推送触发 CF 自动构建部署。
-- **手动**：fork 仓库 → **Actions → Sync upstream → Run workflow**（秒级同步）；或 GitHub 网页 **Sync fork → Update branch** 按钮。
-- **前提**（公共 fork 需检查一次）：
-  - **Actions 已启用**：fork 仓库 → Settings → Actions → General → 勾选 *Allow all actions and reusable workflows*（公共 fork 默认禁用定时任务）。
-  - **Workflow permissions = Read and write**：同上页面，*Workflow permissions* 选 *Read and write permissions*，否则工作流推送会被拒绝。
-  - 不要修改与上游冲突的文件；若有本地改动冲突，同步工作流会停止并列出冲突文件，需手动处理。
+- 可合并时，在只读作业中检查 GitHub 生成的合并提交，运行类型检查、测试、生产构建和 Wrangler 打包预检。PR 中的状态评论链接到该次运行。
+- 发生冲突时，在同一条评论记录处理要求；相同两端提交不会每天重复提醒。手工解决冲突请从本仓库开修复分支，保留上游合并历史。
+- 确认后使用 **Create a merge commit** 合入。连接生产分支的 Workers Builds 负责发布。关闭更新 PR 可暂缓该版本，手动运行 **Actions → Sync upstream** 可重新提议或重试预检。
+- 仓库的 Actions 默认令牌可保持只读。自动开 PR 需要在仓库的 **Settings → Actions → General** 启用 **Allow GitHub Actions to create and approve pull requests**。仅提议更新的作业申请 PR 写权限，工作流不批准或合并 PR。
 
 ## Wrangler 命令行部署
 
