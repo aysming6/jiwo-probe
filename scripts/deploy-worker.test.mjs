@@ -63,7 +63,7 @@ test('an uploaded but undeployed Worker preserves the newest version bindings', 
       { id: 'new', metadata: { created_on: '2026-09-02T00:00:00Z' } },
     ]
     return { resources: { bindings: [{ name: 'PROBE_PING_GROUP_COUNT', type: 'plain_text', text: '1' }] } }
-  })
+  }, '') // Exercise the configured Worker name even inside Workers Builds.
   assert.deepEqual(calls.at(-1), ['versions', 'view', 'new'])
   assert.equal(Object.hasOwn(missingPingVars(defaults, bindings), 'PROBE_PING_GROUP_COUNT'), false)
 })
@@ -128,7 +128,7 @@ test('Workers Builds name override is used for every read, so an existing Worker
     if (args[0] === 'deployments') return { versions: [{ version_id: 'active' }] }
     return { resources: { bindings: [{ name: 'MMWX_ORIGIN', type: 'plain_text', text: 'https://panel.example.com' }, { name: 'PROBE_TOKEN', type: 'secret_text' }] } }
   }
-  assert.deepEqual(readExistingBindings(account, undefined), [])
+  assert.deepEqual(readExistingBindings(account, ''), [])
   calls.length = 0
   const bindings = readExistingBindings(account, 'my-probe')
   assert.equal(setupPresets(bindings, 'placeholder'), null)
