@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { computeMonthlyTrafficCost, computeRemainingValue } from './value.ts'
-import { CYCLE_MONTHS, expiryDateLabel, expiryDays, expiryTimestamp } from './renewal.ts'
+import { CYCLE_MONTHS, expiryDateLabel, expiryDays, renewalPriceCny, upcomingExpiries, expiryTimestamp } from './renewal.ts'
 import { expired, expiring, remainingDays } from './server-format.ts'
 
 const base = { online: true, renewal_currency: 'CNY', traffic_limit: 2 * 1024 ** 4 }
@@ -29,11 +29,19 @@ test('expiry matches controller UTC date arithmetic across timezones without shi
 })
 
 test('monthly traffic cost normalizes monthly, quarterly, half-year and yearly renewal prices', () => {
-  for (const [renewal_cycle, renewal_price] of [['month', 10], ['quarter', 30], ['half_year', 60], ['year', 120], ['two_year', 240], ['three_year', 360]]) {
+  for (const [renewal_cycle, renewal_price] of [['month', 10], ['quarter', 30], ['half_year', 60], ['year', 120], ['two_year', 240], ['three_year', 360], ['five_year', 600]]) {
     assert.deepEqual(computeMonthlyTrafficCost({ ...base, renewal_cycle, renewal_price }), {
       monthlyPrice: 10, quotaTB: 2, perTB: 5, currency: 'CNY', isCny: true,
     })
   }
+})
+
+test('per-TB cost spreads the quota over the traffic reset period; one-time traffic has no monthly cost', () => {
+  const server = { ...base, renewal_cycle: 'five_year', renewal_price: 600, traffic_limit: 6 * 1024 ** 4 }
+  assert.equal(computeMonthlyTrafficCost({ ...server, period_start: '2026-10-30', period_end: '2027-04-30' }).perTB, 10)
+  assert.equal(computeMonthlyTrafficCost({ ...server, period_start: '2026-05-01', period_end: '2027-05-01' }).perTB, 20)
+  assert.equal(computeMonthlyTrafficCost({ ...server, period_start: '2026-10-17', period_end: '2026-11-17' }).perTB, 10 / 6)
+  assert.equal(computeMonthlyTrafficCost({ ...server, traffic_used_scope: 'counter_since_reset' }), null)
 })
 
 test('multi-year remaining value uses the full paid term', t => {
@@ -95,4 +103,24 @@ test('actual usage, speed, traffic direction and expiry never change the adverti
       assert.deepEqual(computeMonthlyTrafficCost({ ...base, renewal_price: 10, traffic_used, download_speed: 1e9, traffic_stats_mode, expires_at: '2020-01-01' }), expected)
     }
   }
+})
+
+test('汇总用人民币价：优先主控换算价，没有换算时只认人民币原价，外币不当人民币', () => {
+  assert.equal(renewalPriceCny({ renewal_price: 49.9, renewal_currency: 'USD', renewal_price_cny: 355.2 }), 355.2)
+  assert.equal(renewalPriceCny({ renewal_price: 49.9, renewal_currency: 'USD' }), undefined)
+  assert.equal(renewalPriceCny({ renewal_price: 799, renewal_currency: 'CNY' }), 799)
+  assert.equal(renewalPriceCny({ renewal_price: 30 }), 30)
+  assert.equal(renewalPriceCny({}), undefined)
+})
+
+test('最近到期：含已过期、跳过永久和没填日期的，按剩余天数排序取前 3 台', () => {
+  const now = Date.parse('2026-10-29T12:00:00Z')
+  assert.deepEqual(upcomingExpiries([
+    { name: 'later', expires_at: '2026-12-01' },
+    { name: 'gone', expires_at: '2026-10-20' },
+    { name: 'forever', expires_at: '2026-10-30', renewal_cycle: 'permanent' },
+    { name: 'none' },
+    { name: 'today', expires_at: '2026-10-29' },
+    { name: 'soon', expires_at: '2026-11-03' },
+  ], now), [{ name: 'gone', days: -9 }, { name: 'today', days: 0 }, { name: 'soon', days: 5 }])
 })

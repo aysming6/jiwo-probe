@@ -1,9 +1,9 @@
 import { Fragment, useMemo, useState, type CSSProperties } from 'react'
 import { ChevronDown, Network } from 'lucide-react'
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { ProbePayload, ProbeServer } from './types'
-import { availabilityCells, availabilityPct, chainLiveSpeed, chainTraffic, chainTrafficDay, type TrafficRoleGroup, flowDuration, FORWARD_TRAFFIC_NOTE, formatAvailability, formatJitter, flowLevel, formatGb, forwardSummary, groupHealth, hopTone, latencyTone, mayHaveRouteSelection, routeFork, sortChains, trendCells, type ForwardStatus } from './forward-model'
+import { availabilityCells, availabilityPct, chainLiveSpeed, chainTraffic, chainTrafficDay, type TrafficRoleGroup, flowDuration, FORWARD_TRAFFIC_NOTE, formatAvailability, formatJitter, flowLevel, formatGb, forwardSummary, groupHealth, hopMatrices, hopTone, latencyTone, mayHaveRouteSelection, routeFork, sortChains, trendCells, type ForwardStatus } from './forward-model'
 import { useNetworkSpeed } from './use-network-speed'
+import { ForwardTrendChart } from './deferred'
 import './probe-history.css'
 
 const roles = { entry: '入口', mid: '中转', exit: '出口' }
@@ -49,6 +49,7 @@ export function ForwardOverview({ data }: { data: ProbePayload }) {
   const chain = current?.chain
   const traffic = chain ? chainTraffic(chain) : null
   const fork = chain ? routeFork(chain) : null
+  const matrices = useMemo(() => chain ? hopMatrices(chain) : [], [chain])
   const chainSpeed = chain ? chainLiveSpeed(chain) : null
   const chainAvailability = chain ? availabilityPct(chain) : null
   const jitter = chain ? formatJitter(chain.jitter_ms) : null
@@ -63,7 +64,7 @@ export function ForwardOverview({ data }: { data: ProbePayload }) {
     <summary><Network size={17} /><h2>转发链拓扑与延迟</h2>
       <span className="probe-forward-summary">共 {summary.total} 条<b data-status="ok">正常 {summary.ok}</b><b data-status="warn">偏慢 {summary.warn}</b><b data-status="down">异常 {summary.down}</b></span>
       <ChevronDown size={16} /></summary>
-    {!chain || !current ? <p className="probe-forward-empty">暂无转发链数据，等待主控探测上报。</p> : <div className="probe-forward-content">
+    {!open ? null : !chain || !current ? <p className="probe-forward-empty">暂无转发链数据，等待主控探测上报。</p> : <div className="probe-forward-content">
       <div className="probe-forward-chains" role="group" aria-label="转发链列表（异常与偏慢置顶）">
         {chains.map((item) => {
           const total = chainTraffic(item.chain)?.total
@@ -146,24 +147,25 @@ export function ForwardOverview({ data }: { data: ProbePayload }) {
             </Fragment>
           })}
         </div>
+        {matrices.map((matrix) => <div className="probe-forward-matrix" key={`${matrix.from}>${matrix.to}`}>
+          <h4>逐台延迟 · {matrix.from} → {matrix.to}<small>行是本组每台，列是下一组每台</small></h4>
+          <div className="probe-forward-matrix-scroll"><table>
+            <thead><tr><th scope="col" />{matrix.targets.map((target) => <th scope="col" key={target} title={target}><span>{target}</span></th>)}</tr></thead>
+            <tbody>{matrix.rows.map((row, i) => <tr key={`${row.name}-${i}`}>
+              <th scope="row" title={row.name}><span>{row.name}</span></th>
+              {row.cells.map((cell, j) => cell
+                ? <td key={j} data-tone={cell.tone} title={`${row.name} → ${matrix.targets[j]}${cell.loss > 0 ? ` · 丢包 ${loss(cell.loss)}` : ''}`}>{cell.tone === 'down' && !(cell.ms && cell.ms > 0) ? '不可达' : latency(cell.ms ?? undefined)}{cell.loss > 0 && <small>丢 {loss(cell.loss)}</small>}</td>
+                : <td key={j} data-tone="idle">—</td>)}
+            </tr>)}</tbody>
+          </table></div>
+        </div>)}
         {mayHaveRouteSelection(chain) && <p className="probe-forward-note">主控接口暂未提供选路结构：连续多个中转组可能是「选路段」里的并行路线（按最低延迟择一），此处按顺序画出，端到端延迟按各段相加，可能偏高。</p>}
         <div className="probe-forward-panels">
           {!!chain.trend?.length && <div className="probe-forward-panel"><h4>端到端延迟与丢包 · 近 {Math.round(chain.trend.length * (chain.bucket_sec || 300) / 60)} 分钟
               <span className="probe-forward-legend"><i data-series="latency" />延迟<i data-series="loss" />丢包</span></h4>
             <div className="probe-forward-trend" role="img" aria-label={`${chain.name} 端到端延迟与丢包趋势`}>
               {/* 延迟用左轴（ms），丢包用右轴（%，至少显示到 10%，避免 0% 贴底时看不出来） */}
-              <ResponsiveContainer width="100%" height="100%"><LineChart data={chain.trend.map((point) => ({
-                ...point,
-                e2e_ms: Number.isFinite(point.e2e_ms) && point.e2e_ms >= 0 ? point.e2e_ms : null,
-                loss: Number.isFinite(point.loss) && point.loss >= 0 ? point.loss : null,
-              }))} margin={{ top: 10, left: 0, right: 0, bottom: 0 }}>
-                <XAxis dataKey="ts" type="number" domain={['dataMin', 'dataMax']} tickFormatter={time} tick={{ fontSize: 11 }} minTickGap={30} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="ms" width={55} tick={{ fontSize: 11 }} tickFormatter={(value) => `${value} ms`} allowDecimals={false} tickCount={5} domain={[0, (max: number) => Math.max(4, Math.ceil(max * 1.15 / 4) * 4)]} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="loss" orientation="right" width={44} tickCount={3} allowDecimals={false} tick={{ fontSize: 11 }} tickFormatter={(value) => `${value}%`} domain={[0, (max: number) => Math.min(100, Math.max(10, Math.ceil(max / 10) * 10))]} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(value, name) => name === 'loss' ? [`${Number(value).toFixed(1)}%`, '丢包'] : [latency(Number(value)), '端到端延迟']} labelFormatter={(value) => time(Number(value))} />
-                <Line yAxisId="ms" dataKey="e2e_ms" name="e2e_ms" type="linear" stroke="var(--ph-accent)" strokeWidth={2} dot={chain.trend.length === 1} connectNulls={false} isAnimationActive={false} />
-                <Line yAxisId="loss" dataKey="loss" name="loss" type="stepAfter" stroke="var(--fw-down)" strokeWidth={1.5} strokeDasharray="4 3" dot={chain.trend.length === 1} connectNulls={false} isAnimationActive={false} />
-              </LineChart></ResponsiveContainer>
+              <ForwardTrendChart trend={chain.trend} />
             </div>
           </div>}
           {traffic && traffic.total <= 0 && <div className="probe-forward-panel"><h4>近 7 天无流量<small className="probe-forward-interval">（{FORWARD_TRAFFIC_NOTE}）</small></h4></div>}

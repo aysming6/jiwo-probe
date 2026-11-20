@@ -1,4 +1,6 @@
 import type { ProbeServer } from '../../types'
+import { primaryPing } from '../../ping-groups.ts'
+import { CYCLE_DAYS } from '../../renewal.ts'
 import type { PingHistory, PingTask } from '@/api/client'
 import type { KomariNode, KomariRecord } from '@/types/komari'
 
@@ -8,7 +10,9 @@ export function uuidFor(index: number) {
 
 function billingCycleDays(cycle?: ProbeServer['renewal_cycle']) {
   if (!cycle) return undefined
-  return cycle === 'quarter' ? 90 : cycle === 'half_year' ? 180 : cycle === 'year' ? 365 : 30
+  // 永久买断没有周期，沿用以前的 30 天；其余按共用的周期天数表（含两年、三年、五年）
+  const days = CYCLE_DAYS[cycle]
+  return Number.isFinite(days) ? days : 30
 }
 
 function parseLoadAverage(value?: string) {
@@ -20,11 +24,18 @@ function parseLoadAverage(value?: string) {
     .filter(Number.isFinite)
 }
 
+// 手动选的国旗（region）优先，按 IP 自动识别的 region_country 兜底；旗帜 emoji 换成国家代码
 function countryCode(server: ProbeServer) {
-  const explicit = server.region_country?.trim().toUpperCase()
-  if (explicit && /^[A-Z]{2}$/.test(explicit)) return explicit
-  const source = server.region?.trim().toUpperCase()
-  return source && /^[A-Z]{2}$/.test(source) ? source : undefined
+  for (const value of [server.region, server.region_country]) {
+    const raw = value?.trim() || ''
+    const points = [...raw].map((char) => char.codePointAt(0) || 0)
+    if (points.length === 2 && points.every((point) => point >= 0x1f1e6 && point <= 0x1f1ff)) {
+      return points.map((point) => String.fromCharCode(point - 0x1f1e6 + 65)).join('')
+    }
+    const code = raw.toUpperCase()
+    if (/^[A-Z]{2}$/.test(code)) return code
+  }
+  return undefined
 }
 
 function compactRegion(server: ProbeServer) {
@@ -81,8 +92,8 @@ export function toMmwxNode(server: ProbeServer, index: number): KomariNode {
 
 export function toMmwxRecord(server: ProbeServer, index: number): KomariRecord {
   const load = parseLoadAverage(server.loadavg)
-  const validPing = (server.ping ?? []).filter((line) => line.current_ms >= 0)
-  const validLoss = (server.ping ?? []).filter((line) => line.loss_pct >= 0)
+  const validPing = primaryPing(server.ping).filter((line) => line.current_ms >= 0)
+  const validLoss = primaryPing(server.ping).filter((line) => line.loss_pct >= 0)
   return {
     uuid: uuidFor(index),
     online: server.online,

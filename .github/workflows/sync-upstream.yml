@@ -24,29 +24,33 @@ jobs:
     steps:
       - name: Check out user repository
         run: |
-          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          git clone --single-branch --branch "$GITHUB_REF_NAME" "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
           cd repo
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Merge upstream updates
+        id: merge
         run: |
           cd repo
           git remote add upstream "https://github.com/chnnic/jiwo-probe.git"
           git fetch --no-tags upstream main
 
-          if git diff --quiet HEAD "upstream/main"; then
+          if git merge-base --is-ancestor upstream/main HEAD; then
             echo "Already up to date."
             exit 0
           fi
 
-          git merge --no-edit "upstream/main" || {
+          git merge --no-edit -Xignore-space-at-eol "upstream/main" || {
             echo "::error::与本地改动冲突, 请手动处理以下文件:"
             git diff --name-only --diff-filter=U
             exit 1
           }
 
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
       - name: Validate merged customizations
+        if: steps.merge.outputs.changed == 'true'
         run: |
           cd repo
           npm ci --ignore-scripts --no-fund --no-audit
@@ -54,6 +58,7 @@ jobs:
           npm run build
 
       - name: Push verified merge
+        if: steps.merge.outputs.changed == 'true'
         run: |
           cd repo
           git push origin "HEAD:${GITHUB_REF_NAME}"

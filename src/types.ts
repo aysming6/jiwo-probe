@@ -1,4 +1,4 @@
-export type ThemeName = 'pixel' | 'flat' | 'anime' | 'glass' | 'lumina' | 'premium' | 'ran' | 'glassmorphism' | 'emerald' | 'lite' | 'luminaplus'
+export type ThemeName = 'pixel' | 'flat' | 'anime' | 'glass' | 'sweet' | 'meow' | 'lumina' | 'premium' | 'ran' | 'glassmorphism' | 'emerald' | 'lite' | 'luminaplus' | 'nezha'
 
 export interface ProbeBackgroundAppearance {
   url: string
@@ -44,6 +44,8 @@ export interface ProbeServer {
   region_name?: string
   region_city?: string
   online: boolean
+  /** 离线时的最后心跳（RFC3339）；在线时不下发 */
+  last_seen?: string
   upload_speed?: number
   download_speed?: number
   traffic_used?: number
@@ -101,10 +103,12 @@ export interface ProbeServer {
   expires_at?: string
   renewal_price?: number
   renewal_price_cny?: number
-  renewal_cycle?: 'month' | 'quarter' | 'half_year' | 'year' | 'two_year' | 'three_year' | 'permanent'
+  renewal_cycle?: 'month' | 'quarter' | 'half_year' | 'year' | 'two_year' | 'three_year' | 'five_year' | 'permanent'
   renewal_currency?: string
   provider_name?: string
   provider_url?: string
+  /** 服务商 logo（主控缓存地址，主控 v0.6.3 起）；主控没匹配到或关了展示时不下发 */
+  provider_logo?: string
   telecom_paid_peer?: boolean
   return_routes?: ProbeReturnRoute[]
 }
@@ -125,10 +129,6 @@ export interface ProbeReturnRoute {
 
 export interface ProbePayload {
   enabled: boolean
-  tri_isp?: {
-    enabled: boolean
-    targets: Array<{ isp: string; key: string; label: string }>
-  }
   block_login?: boolean
   show_name?: boolean
   show_globe?: boolean
@@ -140,6 +140,8 @@ export interface ProbePayload {
   show_traffic_quota?: boolean
   show_renewal_timeline?: boolean
   show_health_score?: boolean
+  /** 主控「三网延迟」：哪三个探测点代表电信 / 联通 / 移动（只带 isp / key / label）。开启时卡片延迟组优先用它，见 applyTriIsp。 */
+  tri_isp?: { enabled?: boolean; targets?: Array<{ isp?: string; key?: string; label?: string }> }
   /** Controller history retention in days (1–7); absent on older controllers. */
   history_days?: number
   title?: string
@@ -157,6 +159,16 @@ export interface ProbePayload {
   servers?: ProbeServer[]
 }
 
+/** 主控 v0.6.2 起（开了「转发链全服务器延迟矩阵」）：本台到下一组某一台的实测延迟 */
+export interface ForwardChainUpstream {
+  name: string
+  /** 不通或还没有数据时为 null */
+  ms: number | null
+  loss_pct?: number
+  /** true 通、false 不通、null 还没有这条的数据 */
+  healthy?: boolean | null
+}
+
 export interface ForwardChainServerData {
   name: string
   to_next_ms: number
@@ -165,6 +177,8 @@ export interface ForwardChainServerData {
   loss_pct?: number
   /** 选路段分叉组成员当前走的路名（如「路1」） */
   route?: string
+  /** 主控 v0.6.2 起：本台到下一组每一台的逐对延迟；主控没开矩阵开关时没有 */
+  ups?: ForwardChainUpstream[]
 }
 
 export interface ForwardChainGroupData {

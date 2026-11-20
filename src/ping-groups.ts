@@ -12,15 +12,19 @@ export interface PingGroupConfig {
   count: 1 | 2 | 3
   defaultTargets: string[]
   intlTargets: string[]
-  strictTargets?: boolean
+  /** 主控「三网延迟」生效时为 true：槽位没命中就显示「—」，不拿国际目标补位（与主控探针页一致）。 */
+  strict?: boolean
+  /** 主控「三网延迟」生效时带上 Cloudflare 的原设置：这台服务器一个三网代表点都没探（例如只探海外目标）时改用它。 */
+  fallback?: PingGroupConfig
 }
 
 /** Follow the controller's selected three carriers, rather than averaging them. */
 export function controllerPingGroups(tri: ProbePayload['tri_isp'], fallback: PingGroupConfig): PingGroupConfig {
   if (!tri?.enabled || !Array.isArray(tri.targets)) return fallback
-  const keys = ['telecom', 'unicom', 'mobile'].map(isp => tri.targets.find(target => target.isp === isp)?.key?.trim())
+  const targets = tri.targets
+  const keys = TRI_ISP_ORDER.map(isp => targets.find(target => target.isp === isp)?.key?.trim())
   if (!keys.every((key): key is string => !!key) || new Set(keys).size !== 3) return fallback
-  return { count: 3, defaultTargets: keys, intlTargets: [], strictTargets: true }
+  return { count: 3, defaultTargets: keys, intlTargets: [], strict: true }
 }
 
 /**
@@ -52,10 +56,27 @@ export const PING_AVERAGES = [
   { key: '__avg_intl__', label: '海外延迟', scope: 'intl' },
 ] as const
 
+/** 主控开启 IPv6 延迟后按服务器追加的目标（key 以 -v6 结尾，名称带「IPv6」），单独成一组平均。 */
+export const PING_IPV6_AVERAGE = { key: '__avg_v6__', label: 'IPv6 延迟', scope: 'cn' } as const
+
+export function isIpv6Ping(series: { key?: string; label?: string }): boolean {
+  return /(^|[-_:])v6$/i.test(series.key?.trim() || '') || /\bIPv6\b/i.test(series.label || '')
+}
+
+/**
+ * 整机汇总（平均延迟、内地 / 海外平均、榜单、网络质量、健康分）只算 IPv4 目标：
+ * 只有部分服务器开了 IPv6 延迟，混进去会让这几台和其他服务器不可比。全是 IPv6 目标时退回全部。
+ */
+export function primaryPing<T extends { key?: string; label?: string }>(ping: readonly T[] = []): T[] {
+  const ipv4 = ping.filter(item => !isIpv6Ping(item))
+  return ipv4.length ? ipv4 : [...ping]
+}
+
 const aliases: Record<string, string> = {
   '平均': '__avg__', '平均延迟': '__avg__', '全部平均': '__avg__', avg: '__avg__',
   '内地延迟': '__avg_cn__', '国内延迟': '__avg_cn__', '内地平均': '__avg_cn__', '国内平均': '__avg_cn__', 'avg-cn': '__avg_cn__',
   '海外延迟': '__avg_intl__', '国际延迟': '__avg_intl__', '海外平均': '__avg_intl__', '国际平均': '__avg_intl__', 'avg-intl': '__avg_intl__',
+  'ipv6延迟': '__avg_v6__', 'ipv6 延迟': '__avg_v6__', 'ipv6平均': '__avg_v6__', 'ipv6 平均': '__avg_v6__', 'avg-v6': '__avg_v6__',
 }
 
 export function normalizePingTarget(value: string): string {
@@ -83,6 +104,25 @@ export function parsePingGroupConfig(input: { count?: unknown; defaultTargets?: 
 
 export const DEFAULT_PING_GROUP_CONFIG = parsePingGroupConfig()
 
+const TRI_ISP_ORDER = ['telecom', 'unicom', 'mobile']
+
+/**
+ * 主控开了「三网延迟」（公开接口的 tri_isp）时，卡片延迟组以主控选的电信 / 联通 / 移动代表点为准，
+ * 覆盖 Cloudflare 运行时变量 PROBE_PING_* 的组数与默认目标；主控没开或没给出任何代表点时原样返回。
+ * 原设置留在 fallback 里，供没有任何三网代表点的服务器使用（见 resolvePingGroups）。
+ * 按 key 匹配（展示名可能被改），顺序固定为电信、联通、移动。
+ */
+export function applyTriIsp(config: PingGroupConfig, tri?: { enabled?: boolean; targets?: Array<{ isp?: string; key?: string }> } | null): PingGroupConfig {
+  if (tri?.enabled !== true || !Array.isArray(tri.targets)) return config
+  const slots = tri.targets
+    .filter(item => item && typeof item.key === 'string' && item.key.trim())
+    .map((item, index) => ({ key: item.key!.trim(), rank: TRI_ISP_ORDER.indexOf(String(item.isp || '').trim().toLowerCase()), index }))
+    .sort((a, b) => (a.rank < 0 ? 9 : a.rank) - (b.rank < 0 ? 9 : b.rank) || a.index - b.index)
+    .slice(0, 3)
+  if (!slots.length) return config
+  return { count: slots.length as 1 | 2 | 3, defaultTargets: slots.map(item => item.key), intlTargets: config.intlTargets, strict: true, fallback: config }
+}
+
 export function pingScope(series: ProbePingSeries): 'cn' | 'intl' | 'unknown' {
   const isp = series.isp?.trim().toLowerCase()
   if (isp === 'intl' || /^intl[-_:]/i.test(series.key || '')) return 'intl'
@@ -96,7 +136,7 @@ export function pingTargetKey(series: ProbePingSeries): string {
 }
 
 export function isPingAverage(key: string): boolean {
-  return PING_AVERAGES.some(average => average.key === key)
+  return key === PING_IPV6_AVERAGE.key || PING_AVERAGES.some(average => average.key === key)
 }
 
 const mean = (values: number[]) => {
@@ -126,12 +166,41 @@ export interface PingTargetOption {
 
 export function pingTargetOptions(ping: ProbePingSeries[]): PingTargetOption[] {
   const lines = [...new Map(ping.filter(item => !isPingAverage(item.key || '')).map(item => [pingTargetKey(item), item])).values()]
+  const primary = primaryPing(lines)
+  const ipv6 = lines.filter(isIpv6Ping)
   return [
     ...PING_AVERAGES.map(average => {
-      const selected = average.scope === 'all' ? lines : lines.filter(item => pingScope(item) === average.scope)
+      const selected = average.scope === 'all' ? primary : primary.filter(item => pingScope(item) === average.scope)
       return { ...average, series: selected.length ? aggregatePingGroup(selected, average.key, average.label) : undefined }
     }),
+    // 没开 IPv6 延迟的服务器不出现这一项，以免每张卡片的下拉都多一个「无目标」。
+    ...(ipv6.length ? [{ ...PING_IPV6_AVERAGE, series: aggregatePingGroup(ipv6, PING_IPV6_AVERAGE.key, PING_IPV6_AVERAGE.label) }] : []),
     ...lines.map(item => ({ key: pingTargetKey(item), label: item.label, scope: pingScope(item), series: { ...item, key: pingTargetKey(item) } })),
+  ]
+}
+
+export type PingChartGroup = 'all' | 'cn' | 'idc' | 'v6'
+
+/** 趋势图「全部 / 内地 / 海外 / IPv6」分组：内地、海外只放 IPv4 线路，IPv6 线路和 IPv6 平均单独一组 */
+export function inPingChartGroup(series: ProbePingSeries, group: PingChartGroup): boolean {
+  if (group === 'all') return true
+  const key = series.key || ''
+  if (group === 'v6') return key === PING_IPV6_AVERAGE.key || (!isPingAverage(key) && isIpv6Ping(series))
+  if (isPingAverage(key) || isIpv6Ping(series)) return false
+  return /电信|联通|移动/.test(series.label) === (group === 'cn')
+}
+
+/**
+ * 历史接口（/api/series）的线路列表：主控给的平均线把 IPv6 目标也算了进去，
+ * 有 IPv6 目标时按 IPv4 目标重算平均，并补一条 IPv6 平均，和卡片口径一致。
+ */
+export function historyPingSeries(average: ProbePingSeries | undefined, all: ProbePingSeries[] = [], label = '平均'): ProbePingSeries[] {
+  const ipv6 = all.filter(isIpv6Ping)
+  if (!ipv6.length) return [...(average ? [{ ...average, key: '__avg__', label }] : []), ...all]
+  return [
+    aggregatePingGroup(primaryPing(all), '__avg__', label),
+    aggregatePingGroup(ipv6, PING_IPV6_AVERAGE.key, PING_IPV6_AVERAGE.label),
+    ...all,
   ]
 }
 
@@ -151,6 +220,8 @@ export interface ResolvedPingGroup {
 }
 
 export function resolvePingGroups(options: PingTargetOption[], config: PingGroupConfig, overrides: Array<string | null> = []): ResolvedPingGroup[] {
+  // 主控三网延迟：这台服务器一个代表点都没有时，整张卡片退回 Cloudflare 的设置，而不是三行全空。
+  if (config.fallback && !config.defaultTargets.some(value => matchTarget(value, options))) return resolvePingGroups(options, config.fallback, overrides)
   const used = new Set<string>()
   const groups = Array.from({ length: config.count }, (_, index): ResolvedPingGroup => ({
     requested: overrides[index] ?? config.defaultTargets[index] ?? '', fallback: false,
@@ -165,13 +236,13 @@ export function resolvePingGroups(options: PingTargetOption[], config: PingGroup
       used.add(target.key)
     }
   }
-  const backups = (config.strictTargets ? [] : config.intlTargets.length ? config.intlTargets : PING_GROUP_DEFAULTS.intlTargets)
+  const backups = (config.intlTargets.length ? config.intlTargets : PING_GROUP_DEFAULTS.intlTargets)
     .flatMap(value => {
       const item = matchTarget(value, options)
       return item?.scope === 'intl' ? [item] : []
     })
   for (const group of groups) {
-    if (group.target) continue
+    if (group.target || config.strict) continue
     const target = backups.find(item => !used.has(item.key))
     if (target) {
       group.target = target

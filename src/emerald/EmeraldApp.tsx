@@ -1,3 +1,4 @@
+import { ProviderLogo } from '../ProviderLogo'
 import { THEME_OPTIONS } from '../theme-picker-model'
 import { ThemeSelect } from '../ThemePicker'
 import { useNetworkSpeed } from '../use-network-speed'
@@ -41,6 +42,8 @@ import {
 } from 'lucide-react'
 import { RegionGlobe } from '../RegionGlobe'
 import { CardPingGroups } from '../CardPingGroups'
+import { LazyCard } from '../LazyCard'
+import { primaryPing } from '../ping-groups'
 import { ConnectionHistory } from '../ConnectionHistory'
 import { ForwardOverview, ServerDetail, TrafficDialog } from '../deferred'
 import { Twemoji } from '../Twemoji'
@@ -97,7 +100,8 @@ function flagFromCode(code?: string): string {
 }
 
 function regionCode(server: ProbeServer): string {
-  return (server.region_country || flagToCountryCode(server.region || '') || 'UN').toUpperCase()
+  // 手动选的国旗（region）优先，按 IP 自动识别的 region_country 兜底
+  return (flagToCountryCode(server.region || '') || server.region_country || 'UN').toUpperCase()
 }
 
 function regionFlag(server: ProbeServer): string {
@@ -107,7 +111,7 @@ function regionFlag(server: ProbeServer): string {
 }
 
 function averagePing(server: ProbeServer): { latency: number; loss: number } | null {
-  const series = (server.ping || []).filter((item) => Number.isFinite(item.current_ms) && item.current_ms >= 0)
+  const series = primaryPing(server.ping).filter((item) => Number.isFinite(item.current_ms) && item.current_ms >= 0)
   if (!series.length) return null
   return {
     latency: series.reduce((sum, item) => sum + item.current_ms, 0) / series.length,
@@ -159,7 +163,10 @@ function Overview({ servers }: { servers: EnrichedServer[] }) {
     const traffic = servers.reduce((sum, server) => sum + (server.traffic_used || 0), 0)
     const upload = servers.reduce((sum, server) => sum + (server.upload_speed || 0), 0)
     const download = servers.reduce((sum, server) => sum + (server.download_speed || 0), 0)
-    const remaining = servers.reduce((sum, server) => sum + (computeRemainingValue(server)?.value || 0), 0)
+    const remaining = servers.reduce((sum, server) => {
+      const value = computeRemainingValue(server)
+      return value && value.currency.toUpperCase() === 'CNY' ? sum + value.value : sum
+    }, 0)
     const rows = [
       { key: 'memory', label: '内存用量', icon: <MemoryStick size={17} />, text: bytes(memoryUsed), unit: `/ ${bytes(memoryTotal)}`, tone: 'violet' },
       { key: 'disk', label: '硬盘用量', icon: <HardDrive size={17} />, text: bytes(diskUsed), unit: `/ ${bytes(diskTotal)}`, tone: 'amber' },
@@ -409,7 +416,7 @@ function NodeCard({ server, index, open }: { server: EnrichedServer; index: numb
           {flag && <Twemoji className="emerald-node-flag">{flag}</Twemoji>}
           <strong>{name}</strong>
         </div>
-        <span className="probe-unlock-tools"><UnlockButton server={server} /><Monitor size={15} className="emerald-node-os" /></span>
+        <span className="probe-unlock-tools"><ProviderLogo path={server.provider_logo} name={server.provider_name} url={server.provider_url} /><UnlockButton server={server} /><Monitor size={15} className="emerald-node-os" /></span>
       </header>
       <p className="emerald-node-system">{server.cpu_cores ? `${server.cpu_cores} 核 · ` : ''}{server.cpu_model || server.os || '系统信息暂缺'}</p>
       <div className="emerald-node-metrics">
@@ -656,7 +663,7 @@ export default function EmeraldApp({ data, onThemeChange }: { data: ProbePayload
             <section className="emerald-node-section">
               <div className="emerald-node-section-head"><div><span className="emerald-live-dot" />实时节点</div><span>显示 {visible.length} / {servers.length}</span></div>
               {visible.length === 0 ? <div className="emerald-empty"><Server size={24} />暂无符合条件的服务器</div> : view === 'card' ? (
-                <div className="emerald-node-grid">{visible.map((server) => <NodeCard key={server.name} server={server} index={servers.indexOf(server)} open={() => openDetail(servers.indexOf(server))} />)}</div>
+                <div className="emerald-node-grid">{visible.map((server) => <LazyCard key={server.name} className="emerald-glow-card emerald-node-card" name={server.name || '未命名服务器'} estimatedHeight={484}><NodeCard server={server} index={servers.indexOf(server)} open={() => openDetail(servers.indexOf(server))} /></LazyCard>)}</div>
               ) : view === 'table' ? <TableView servers={visible} allServers={servers} open={openDetail} /> : <StatusView servers={visible} allServers={servers} open={openDetail} />}
             </section>
           </div>
@@ -673,7 +680,7 @@ export default function EmeraldApp({ data, onThemeChange }: { data: ProbePayload
       </main>
 
       <footer className="emerald-footer">
-        <span><span className="emerald-live-dot" />{servers.filter((server) => server.online).length} 台在线 · 实时更新</span>
+        <span><span>Powered by <a href="https://github.com/chnnic/jiwo-probe" target="_blank" rel="noreferrer">Jiwo Probe</a></span><span aria-hidden="true">·</span><span className="emerald-live-dot" />{servers.filter((server) => server.online).length} 台在线 · 实时更新</span>
         <span>Emerald · inspired by <a href="https://github.com/Tokinx/komari-theme-emerald" target="_blank" rel="noreferrer">Komari Theme Emerald</a></span>
       </footer>
 

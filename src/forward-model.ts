@@ -131,6 +131,10 @@ export function chainTrafficDay(chain: ForwardChainData, dayIndex: number) {
 export type CellTone = ForwardStatus | 'idle'
 
 /** 链路卡片状态条：每个 bucket 一格，判断口径与整条链一致（无数据为 idle）。 */
+// 状态条一条链几百格、每格两个时间：复用同一个格式化器，toLocaleTimeString 每次都要新建一个，慢得多。
+const CLOCK_FORMAT = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+const clock = (ms: number) => CLOCK_FORMAT.format(ms)
+
 export function trendCells(chain: ForwardChainData): { ts: number; tone: CellTone; label: string }[] {
   return (chain.trend || []).map((point) => {
     const ms = finite(point.e2e_ms) ? point.e2e_ms : -1
@@ -139,7 +143,7 @@ export function trendCells(chain: ForwardChainData): { ts: number; tone: CellTon
       : lossPct >= FORWARD_DOWN_LOSS ? 'down'
       : lossPct >= FORWARD_WARN_LOSS || ms >= FORWARD_SLOW_MS ? 'warn'
       : 'ok'
-    const time = new Date(point.ts * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+    const time = clock(point.ts * 1000)
     const label = tone === 'idle' ? `${time} · 无数据` : `${time} · ${Math.round(ms)} ms · 丢包 ${lossPct.toFixed(1)}%`
     return { ts: point.ts, tone, label }
   })
@@ -149,7 +153,6 @@ export function trendCells(chain: ForwardChainData): { ts: number; tone: CellTon
 const CELL_TONE: Record<string, CellTone> = { o: 'ok', d: 'warn', b: 'down', n: 'idle' }
 const CELL_LABEL: Record<CellTone, string> = { ok: '正常', warn: '降级', down: '中断', idle: '无数据' }
 const DAY_MS = 24 * 3600 * 1000
-const clock = (ms: number) => new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 
 /**
  * 近 24 小时状态条（主控 v0.5.6-beta.6 起的 cells）：每个字符一格、按时间先后排列，最后一格是当前。
@@ -230,6 +233,45 @@ export function routeFork(chain: ForwardChainData) {
       tone: (finite(route.loss_pct) && route.loss_pct >= FORWARD_DOWN_LOSS ? 'down' : latencyTone(route.latency_ms)) as HopTone,
     })),
   }
+}
+
+export interface HopMatrixCell { ms: number | null; loss: number; tone: HopTone }
+export interface HopMatrix {
+  from: string
+  to: string
+  targets: string[]
+  rows: Array<{ name: string; cells: Array<HopMatrixCell | null> }>
+}
+
+/**
+ * 逐台延迟矩阵（主控 v0.6.2 起的 server.ups）：每一跳一张表，行是本组每台，列是下一组每台。
+ * 下一组只有一台时与每台自己的 to_next_ms 重复，不出表；主控没开矩阵开关时返回空数组。
+ */
+export function hopMatrices(chain: ForwardChainData): HopMatrix[] {
+  const result: HopMatrix[] = []
+  chain.groups.forEach((group, index) => {
+    const targets: string[] = []
+    for (const server of group.servers) {
+      for (const up of server.ups || []) if (up?.name && !targets.includes(up.name)) targets.push(up.name)
+    }
+    if (targets.length < 2) return
+    result.push({
+      from: group.name,
+      to: chain.groups[index + 1]?.name || '下一组',
+      targets,
+      rows: group.servers.map((server) => ({
+        name: server.name,
+        cells: targets.map((target) => {
+          const up = server.ups?.find((item) => item.name === target)
+          if (!up) return null
+          const lossPct = finite(up.loss_pct) ? up.loss_pct : 0
+          const down = up.healthy === false || lossPct >= FORWARD_DOWN_LOSS
+          return { ms: up.ms, loss: lossPct, tone: down ? 'down' : latencyTone(up.ms ?? undefined) }
+        }),
+      })),
+    })
+  })
+  return result
 }
 
 export type FlowLevel = 0 | 1 | 2 | 3

@@ -32,6 +32,14 @@ const SHOTS = [
   ['lite', 'lite-light', null, 1440, 1000],
   ['ran', 'ran', null, 1440, 1000],
   ['flat', 'flat', 'light', 1440, 1000],
+  ['nezha-light', 'nezha-light', null, 1440, 1000],
+  ['nezha-dark', 'nezha-dark', null, 1440, 1000],
+  ['sweet-light', 'sweet-light', null, 1440, 1000],
+  ['sweet-dark', 'sweet-dark', null, 1440, 1000],
+  ['glass-light', 'glass-light', null, 1440, 1000],
+  ['glass-dark', 'glass-dark', null, 1440, 1000],
+  ['meow-light', 'meow-light', null, 1440, 1000],
+  ['meow-dark', 'meow-dark', null, 1440, 1000],
   ['mobile-luminaplus', 'luminaplus-paper', null, 390, 844],
 ]
 

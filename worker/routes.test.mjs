@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 // 打包真实 Worker，用替身 fetch 记录发往主控的请求，不连接主控也不使用真实密钥。
 const bundle = await build({ entryPoints: [fileURLToPath(new URL('./index.ts', import.meta.url))], bundle: true, write: false, format: 'esm', platform: 'neutral' })
-const { default: worker } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`)
+const { default: worker, ProbeHub } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`)
 
 const TOKEN = 'test-probe-token'
 // 模拟 not_found_handling 为 none 的静态资源：只有列出的文件存在，其余返回 404
@@ -138,5 +138,276 @@ test('Passkey 鉴权转发不携带只读探针密钥和访客 Cookie', async ()
     assert.equal(new URL(calls[0].url).pathname, '/api/login/passkey/begin')
     assert.equal(calls[0].headers.get('X-MMwx-Probe-Token'), null)
     assert.equal(calls[0].headers.get('Cookie'), null)
+  })
+})
+
+test('占位值或缺失的设置返回 503 并说明缺哪项，不连接主控也不暴露值', async () => {
+  const cases = [
+    [{ MMWX_ORIGIN: '待填写', PROBE_TOKEN: '待填写' }, 'MMWX_ORIGIN,PROBE_TOKEN'],
+    [{ MMWX_ORIGIN: undefined, PROBE_TOKEN: TOKEN }, 'MMWX_ORIGIN'],
+    [{ MMWX_ORIGIN: 'panel.test', PROBE_TOKEN: TOKEN }, 'MMWX_ORIGIN'],
+    [{ MMWX_ORIGIN: 'http://panel.test', PROBE_TOKEN: TOKEN }, 'MMWX_ORIGIN'],
+    [{ MMWX_ORIGIN: 'https://panel.test', PROBE_TOKEN: '待填写' }, 'PROBE_TOKEN'],
+  ]
+  for (const [settings, missing] of cases) {
+    await withUpstream(() => new Response('{}'), async calls => {
+      const response = await worker.fetch(new Request('https://probe.test/api/probe'), { ...env([]), ...settings }, {})
+      assert.equal(response.status, 503)
+      assert.equal(response.headers.get('X-Probe-Setup'), missing)
+      const body = await response.text()
+      assert.ok(body.includes(missing))
+      assert.ok(!body.includes(TOKEN))
+      assert.equal(calls.length, 0)
+    })
+  }
+})
+
+test('占位设置下静态页面仍能打开，登录入口回到探针首页', async () => {
+  const placeholders = { ...env([]), MMWX_ORIGIN: '待填写', PROBE_TOKEN: '待填写' }
+  const page = await worker.fetch(new Request('https://probe.test/'), placeholders, {})
+  assert.equal(page.status, 200)
+  const login = await worker.fetch(new Request('https://probe.test/login'), placeholders, {})
+  assert.equal(login.status, 302)
+  assert.equal(login.headers.get('Location'), 'https://probe.test/')
+})
+
+// ProbeHub 的替身运行环境：内存存储、收集 waitUntil、没有 WebSocket 连接
+function hubState(storage = new Map()) {
+  const pending = []
+  return {
+    storage,
+    pending,
+    state: {
+      storage: {
+        get: async key => storage.get(key),
+        put: async (key, value) => { storage.set(key, structuredClone(value)) },
+        getAlarm: async () => 1,
+        setAlarm: async () => {},
+      },
+      blockConcurrencyWhile: fn => fn(),
+      waitUntil: promise => { pending.push(Promise.resolve(promise).catch(() => {})) },
+      getWebSockets: () => [],
+      getTags: () => [],
+    },
+  }
+}
+
+test('ProbeHub 冷启动先返回上一份快照并标明年龄，后台刷新后恢复实时数据', async () => {
+  const realNow = Date.now
+  let now = 1_800_000_000_000
+  Date.now = () => now
+  const hubEnv = { MMWX_ORIGIN: 'https://panel.test', PROBE_TOKEN: TOKEN }
+  const snapshotRequest = () => new Request('https://probe-hub.internal/snapshot')
+  let version = 1
+  let release
+  try {
+    await withUpstream(async () => {
+      if (release === null) await new Promise(resolve => { release = resolve })
+      return Response.json({ enabled: true, version: version++, servers: [] })
+    }, async calls => {
+      const first = hubState()
+      const hub = new ProbeHub(first.state, hubEnv)
+      // 从没取过数据：只能等主控
+      const cold = await hub.fetch(snapshotRequest())
+      assert.equal(cold.headers.has('X-Probe-Stale-Age'), false)
+      assert.equal((await cold.json()).version, 1)
+      await Promise.all(first.pending)
+      assert.equal(first.storage.has('probe-last-snapshot-v1'), true)
+
+      // 12 秒内算新鲜，不标旧也不再访问主控
+      now += 5_000
+      const fresh = await hub.fetch(snapshotRequest())
+      assert.equal(fresh.headers.has('X-Probe-Stale-Age'), false)
+      assert.equal(calls.length, 1)
+
+      // 闲置 5 分钟后主控变慢：立即拿到旧快照，主控请求在后台进行
+      now += 300_000
+      release = null
+      const stale = await hub.fetch(snapshotRequest())
+      assert.equal(stale.headers.get('X-Probe-Stale-Age'), '305')
+      assert.equal((await stale.json()).version, 1)
+      assert.equal(calls.length, 2)
+      // 刷新还没回来时再来一位访客：仍是旧快照，不重复打主控
+      const again = await hub.fetch(snapshotRequest())
+      assert.equal(again.headers.get('X-Probe-Stale-Age'), '305')
+      assert.equal(calls.length, 2)
+      release()
+      await Promise.all(first.pending)
+      const refreshed = await hub.fetch(snapshotRequest())
+      assert.equal(refreshed.headers.has('X-Probe-Stale-Age'), false)
+      assert.equal((await refreshed.json()).version, 2)
+
+      // Durable Object 被回收后的新实例：从存储取回快照，照样立即应答
+      now += 120_000
+      const second = hubState(first.storage)
+      const revived = new ProbeHub(second.state, hubEnv)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      release = null
+      const fromStorage = await revived.fetch(snapshotRequest())
+      assert.ok(Number(fromStorage.headers.get('X-Probe-Stale-Age')) >= 120)
+      release()
+      await Promise.all(second.pending)
+
+      // 超过 30 分钟的快照不再拿出来，宁可等主控
+      now += 31 * 60_000
+      release = undefined
+      const tooOld = await revived.fetch(snapshotRequest())
+      assert.equal(tooOld.headers.has('X-Probe-Stale-Age'), false)
+    })
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('/api/probe 透传旧快照年龄且不写入微缓存', async () => {
+  const puts = []
+  const originalCaches = globalThis.caches
+  globalThis.caches = { default: { match: async () => undefined, put: async (...args) => { puts.push(args) } } }
+  try {
+    const hub = { fetch: async () => new Response('{"servers":[]}', { headers: { 'Content-Type': 'application/json', 'X-Probe-Stale-Age': '42' } }) }
+    const response = await worker.fetch(new Request('https://probe.test/api/probe', { headers: ownPage }), { ...env([]), PROBE_HUB: { getByName: () => hub } }, { waitUntil() {} })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('X-Probe-Stale-Age'), '42')
+    assert.equal(response.headers.get('X-Probe-Cache'), 'BYPASS')
+    assert.equal(puts.length, 0)
+  } finally {
+    globalThis.caches = originalCaches
+  }
+})
+
+test('ProbeHub 广播：delta=2 的连接收第 2 版增量帧，delta=1 收第 1 版，其余和刚连上的收完整帧', async () => {
+  const client = (tags, attachment = null) => ({ tags, attachment, sent: [], readyState: WebSocket.OPEN,
+    send(data) { this.sent.push(JSON.parse(data)) }, deserializeAttachment() { return this.attachment }, serializeAttachment(value) { this.attachment = value } })
+  const v2 = client(['probe-client', 'probe-delta2'])
+  const v1 = client(['probe-client', 'probe-delta'])
+  const plain = client(['probe-client'])
+  const fresh = client(['probe-client', 'probe-delta2'], { needsFull: true })
+  const sockets = [v2, v1, plain, fresh]
+  const base = hubState()
+  base.state.getWebSockets = tag => sockets.filter(socket => !tag || socket.tags.includes(tag))
+  base.state.getTags = socket => socket.tags
+  const server = cpu => ({ name: 'a', cpu_pct: cpu, os: 'Debian', cumulative_up: 1, cumulative_down: 1, ping: [{ key: 'k', label: 'K', current_ms: 10, loss_pct: 0, buckets: [{ ms: 10, loss: 0 }] }] })
+  let cpu = 1
+  await withUpstream(() => Response.json({ enabled: true, title: 't', servers: [server(cpu++)] }), async () => {
+    const hub = new ProbeHub(base.state, { MMWX_ORIGIN: 'https://panel.test', PROBE_TOKEN: TOKEN })
+    await hub.alarm()
+    for (const socket of sockets) assert.equal(socket.sent.at(-1).delta, undefined)
+    assert.equal(fresh.attachment, null)
+    await hub.alarm()
+    assert.equal(v2.sent.at(-1).delta, 2)
+    assert.deepEqual(v2.sent.at(-1).servers, [{ cpu_pct: 2 }])
+    assert.equal('title' in v2.sent.at(-1), false)
+    assert.equal(v1.sent.at(-1).delta, 1)
+    assert.equal(v1.sent.at(-1).servers[0].os, 'Debian')
+    assert.equal(plain.sent.at(-1).delta, undefined)
+    assert.equal(plain.sent.at(-1).servers[0].cpu_pct, 2)
+    assert.equal(fresh.sent.at(-1).delta, 2)
+  })
+})
+
+test('同名的两台机器各自估算流量，原先混在一起累加出来的日流量被清掉', async () => {
+  const today = new Date().toISOString().slice(0, 10)
+  const storage = new Map([['probe-estimated-daily-traffic-v1', {
+    Twin: { lastUp: 5, lastDown: 5, lastSeenAt: 1, days: { '2020-01-01': { uplink: 1, downlink: 1, total: 2 }, [today]: { uplink: 6e12, downlink: 5e12, total: 11e12 } } },
+  }]])
+  // 保留期外的日期会被清理，换成昨天
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+  const twin = storage.get('probe-estimated-daily-traffic-v1').Twin
+  twin.days = { [yesterday]: { uplink: 100, downlink: 200, total: 300 }, [today]: twin.days[today] }
+  const base = hubState(storage)
+  let round = 0
+  const servers = () => {
+    round++
+    return [
+      // 主控有真实日流量的新机器，累计计数器比老机器大得多
+      { name: 'Twin', mem_total: 1, expires_at: '2027-11-11', traffic_limit: 1e12, cumulative_up: 19e9 + round, cumulative_down: 19e9, traffic_used_total: 9, daily_traffic: [{ date: today, uplink: 4, downlink: 5, total: 9 }] },
+      { name: 'Twin', mem_total: 2, expires_at: '2027-10-25', traffic_limit: 1e12, cumulative_up: 5e9 + round * 10, cumulative_down: 7e9 + round, traffic_used_total: 0 },
+    ]
+  }
+  await withUpstream(() => Response.json({ enabled: true, servers: servers() }), async () => {
+    const hub = new ProbeHub(base.state, { MMWX_ORIGIN: 'https://panel.test', PROBE_TOKEN: TOKEN })
+    await hub.alarm()
+    await hub.alarm()
+    await hub.alarm()
+    const payload = await (await hub.fetch(new Request('https://probe-hub.internal/snapshot'))).json()
+    const [fresh, old] = payload.servers
+    assert.equal(fresh.traffic_used_total, 9)
+    assert.equal(fresh.daily_traffic_estimated, undefined)
+    assert.equal(old.daily_traffic_estimated, true)
+    assert.deepEqual(old.daily_traffic.map(row => row.total), [300, 22])
+    assert.equal(old.traffic_used_total, 322)
+  })
+})
+
+test('同名且指纹也相同的机器分不出彼此，不做估算', async () => {
+  const base = hubState()
+  let round = 0
+  await withUpstream(() => {
+    round++
+    return Response.json({ enabled: true, servers: [
+      { name: 'Same', mem_total: 1, cumulative_up: 100 + round, cumulative_down: 1 },
+      { name: 'Same', mem_total: 1, cumulative_up: 9000 + round, cumulative_down: 1 },
+    ] })
+  }, async () => {
+    const hub = new ProbeHub(base.state, { MMWX_ORIGIN: 'https://panel.test', PROBE_TOKEN: TOKEN })
+    await hub.alarm()
+    await hub.alarm()
+    const payload = await (await hub.fetch(new Request('https://probe-hub.internal/snapshot'))).json()
+    for (const server of payload.servers) assert.equal(server.daily_traffic_estimated, undefined)
+  })
+})
+
+test('改名后留下的离谱日流量只修复一次：超过整期额度且远高于其它日子的才删', async () => {
+  const today = new Date().toISOString().slice(0, 10)
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+  const storage = new Map([['probe-estimated-daily-traffic-v1', {
+    Solo: { lastUp: 5, lastDown: 5, lastSeenAt: 1, days: { [yesterday]: { uplink: 100, downlink: 200, total: 300 }, [today]: { uplink: 6e12, downlink: 5e12, total: 11e12 } } },
+    Busy: { lastUp: 5, lastDown: 5, lastSeenAt: 1, days: { [yesterday]: { uplink: 1e12, downlink: 1e12, total: 2e12 }, [today]: { uplink: 1e12, downlink: 2e12, total: 3e12 } } },
+  }]])
+  const base = hubState(storage)
+  await withUpstream(() => Response.json({ enabled: true, servers: [
+    { name: 'Solo', traffic_limit: 1e12, cumulative_up: 15, cumulative_down: 6 },
+    { name: 'Busy', traffic_limit: 1e12, cumulative_up: 5, cumulative_down: 5 },
+  ] }), async () => {
+    const hub = new ProbeHub(base.state, { MMWX_ORIGIN: 'https://panel.test', PROBE_TOKEN: TOKEN })
+    await hub.alarm()
+    const payload = await (await hub.fetch(new Request('https://probe-hub.internal/snapshot'))).json()
+    assert.deepEqual(payload.servers[0].daily_traffic.map(row => row.total), [300, 11])
+    assert.deepEqual(payload.servers[1].daily_traffic.map(row => row.total), [2e12, 3e12])
+    assert.equal(storage.get('probe-estimated-traffic-repair-v1'), true)
+  })
+})
+
+test('服务商 logo 只转发带哈希的 PNG 文件名，不带探针令牌，长期缓存', async () => {
+  await withUpstream(() => new Response('png', { headers: { 'Content-Type': 'text/html' } }), async calls => {
+    const ok = await worker.fetch(new Request('https://probe.test/api/provider-logo/51.3e6910e1e9.png'), env([]), {})
+    assert.equal(ok.status, 200)
+    assert.equal(ok.headers.get('Content-Type'), 'image/png')
+    assert.match(ok.headers.get('Cache-Control'), /immutable/)
+    assert.equal(calls.length, 1)
+    assert.equal(new URL(calls[0].url).pathname, '/api/public/provider-logo/51.3e6910e1e9.png')
+    assert.equal(calls[0].headers.get('X-MMwx-Probe-Token'), null)
+    for (const path of ['/api/provider-logo/..%2Fadmin.png', '/api/provider-logo/a.png', '/api/provider-logo/51.3e6910e1e9.svg']) {
+      const bad = await worker.fetch(new Request(`https://probe.test${path}`), env([]), {})
+      assert.notEqual(bad.headers.get('Content-Type'), 'image/png', path)
+    }
+    assert.equal(calls.length, 1, '不合规的文件名不会连主控')
+    const post = await worker.fetch(new Request('https://probe.test/api/provider-logo/51.3e6910e1e9.png', { method: 'POST' }), env([]), {})
+    assert.equal(post.status, 405)
+  })
+})
+
+test('服务商 logo 主控偶发失败时重试一次，仍失败不让浏览器记住', async () => {
+  let n = 0
+  await withUpstream(() => (++n === 1 ? new Response('busy', { status: 429 }) : new Response('png')), async calls => {
+    const ok = await worker.fetch(new Request('https://probe.test/api/provider-logo/9.b2cc6fa58e.png'), env([]), {})
+    assert.equal(ok.status, 200)
+    assert.equal(calls.length, 2)
+  })
+  await withUpstream(() => new Response('busy', { status: 429 }), async calls => {
+    const bad = await worker.fetch(new Request('https://probe.test/api/provider-logo/9.b2cc6fa58e.png'), env([]), {})
+    assert.equal(bad.status, 404)
+    assert.equal(bad.headers.get('Cache-Control'), 'no-store')
+    assert.equal(calls.length, 2)
   })
 })

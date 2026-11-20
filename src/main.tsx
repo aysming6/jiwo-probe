@@ -1,11 +1,15 @@
 import { lazy, StrictMode, Suspense, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { App } from './App'
+import { App, prefetchThemeChunks, preloadActiveThemeChunk } from './App'
+import { THEME_PICKER_INTENT_EVENT } from './theme-picker-model'
 import { applyAppearance, getActiveTheme, ProbeProvider, useProbe } from './use-probe'
+import { installFlagFont } from './flag-font'
 import './styles.css'
 import './server-capabilities.css'
 import './connection-colors.css'
 import './lumina-paper.css'
+
+installFlagFont()
 
 // Ran 主题界面（复刻 Komari-Ran-Theme · 精密金工质感），懒加载保持首屏体积。
 // 主控下发 theme 为 ran 系列（ran/ran-night/ran-mist/...）时渲染金工界面，
@@ -40,6 +44,8 @@ function Root() {
 }
 
 applyAppearance()
+preloadActiveThemeChunk()
+window.addEventListener(THEME_PICKER_INTENT_EVENT, prefetchThemeChunks, { once: true })
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ProbeProvider>

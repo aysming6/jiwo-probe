@@ -1,5 +1,6 @@
 import type { ProbeBucket, ProbePingSeries, ProbeServer } from './types.ts'
 import { EXPIRING_DAYS, expiryDays } from './renewal.ts'
+import { primaryPing } from './ping-groups.ts'
 
 export function formatAxisDateTime(unixSeconds: number, showMinutes = true): string {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -58,6 +59,14 @@ export function regionFlag(region?: string): string {
   return String.fromCodePoint(...[...country].map((char) => 0x1f1e6 + char.charCodeAt(0) - 65))
 }
 
+/**
+ * 服务器所在地区：管理员在主控探针设置里手动选的国旗（region）优先；region_country 是许可证服务
+ * 按 IP 网段自动识别的，只在没手动选时兜底。反过来的话 IP 库认错国家时手动改了也不生效。
+ */
+export function probeRegion(server: { region?: string; region_country?: string }): string {
+  return server.region?.trim() || server.region_country?.trim() || ''
+}
+
 export function hasLeadingFlag(value: string): boolean {
   return /^\p{Regional_Indicator}{2}/u.test(value.trim())
 }
@@ -79,7 +88,9 @@ export function pct(used = 0, total = 0): number {
 }
 
 
-export function averagePing(series: ProbePingSeries[]): ProbePingSeries {
+/** 整机平均（只算 IPv4 目标，见 primaryPing） */
+export function averagePing(allSeries: ProbePingSeries[]): ProbePingSeries {
+  const series = primaryPing(allSeries)
   const count = series[0]?.buckets.length || 0
   const buckets: ProbeBucket[] = Array.from({ length: count }, (_, index) => {
     const values = series.map((item) => item.buckets[index]).filter(Boolean)
@@ -135,5 +146,7 @@ export function lossScale(rows: Array<Record<string, string | number | null>>) {
 
 export function formatLossTick(value: number): string {
   const digits = value < 0.1 ? 3 : value < 1 ? 2 : value < 10 ? 1 : 0
-  return `${value.toFixed(digits).replace(/\.?0+$/, '')}%`
+  // 只去小数点后的末尾 0；整数刻度不能动（100 → 1、50 → 5 的错）
+  const text = value.toFixed(digits)
+  return `${text.includes('.') ? text.replace(/\.?0+$/, '') : text}%`
 }

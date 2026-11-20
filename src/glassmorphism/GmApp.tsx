@@ -1,3 +1,4 @@
+import { ProviderLogo } from '../ProviderLogo'
 import { THEME_OPTIONS } from '../theme-picker-model'
 import { ThemeSelect } from '../ThemePicker'
 import { useNetworkSpeed } from '../use-network-speed'
@@ -28,11 +29,12 @@ import {
 } from 'lucide-react'
 import type { ProbePayload, ProbeServer, ThemeName } from '../types'
 import { computeRemainingValue, formatMoney } from '../value'
-import { CYCLE_LABELS, isPermanent } from '../renewal'
+import { CYCLE_LABELS, isPermanent, renewalPriceCny } from '../renewal'
 import { flagToCountryCode } from '../country-flag'
 import { Twemoji } from '../Twemoji'
 import { PasskeyLogin } from '../PasskeyLogin'
 import { CardPingGroups } from '../CardPingGroups'
+import { LazyCard } from '../LazyCard'
 import { ConnectionHistory } from '../ConnectionHistory'
 import './gm.css'
 import { useVisitorInfo } from '../ran/hooks/useVisitorInfo'
@@ -82,8 +84,9 @@ function countryFlag(code?: string): string {
 
 function serverRegionKey(server: ProbeServer): string {
   return (
-    server.region_country ||
+    // 手动选的国旗（region）优先，按 IP 自动识别的 region_country 兜底（见 server-format probeRegion）
     flagToCountryCode(server.region ?? '') ||
+    server.region_country ||
     server.region?.trim() ||
     'UNKNOWN'
   ).toUpperCase()
@@ -182,7 +185,7 @@ function GmNodeCard({ server, index }: { server: EnrichedServer; index: number }
             <h2 className="gm-node-title" title={name}>{name}</h2>
           </div>
           <div className="gm-node-icons">
-            <UnlockButton server={server} />
+            <ProviderLogo path={server.provider_logo} name={server.provider_name} url={server.provider_url} /><UnlockButton server={server} />
             <span className="gm-node-os" title={systemTitle(server)} onClick={(event) => event.stopPropagation()}>
               <SystemIcon server={server} />
             </span>
@@ -332,8 +335,9 @@ function GmGeneralCards({ servers }: { servers: ProbeServer[] }) {
     let totalPrice = 0
     for (const server of servers) {
       const rv = computeRemainingValue(server)
-      if (rv) totalValue += rv.value
-      if (server.renewal_price !== undefined) totalPrice += server.renewal_price_cny ?? server.renewal_price
+      // 只汇总人民币口径，外币没有主控换算价时不计入
+      if (rv && rv.currency.toUpperCase() === 'CNY') totalValue += rv.value
+      totalPrice += renewalPriceCny(server) ?? 0
     }
     const mem = splitBytesText(memUsed)
     const disk = splitBytesText(diskUsed)
@@ -644,7 +648,7 @@ export default function GmApp({
           view === 'card' ? (
             <div className="gm-node-grid">
               {visible.map((server) => (
-                <GmNodeCard key={server.name} server={server} index={servers.indexOf(server)} />
+                <LazyCard key={server.name} className="gm-node-card" name={server.name || '未命名服务器'} estimatedHeight={531}><GmNodeCard server={server} index={servers.indexOf(server)} /></LazyCard>
               ))}
             </div>
           ) : (
@@ -696,8 +700,8 @@ export default function GmApp({
       <footer className="gm-footer">
         <div>
           Powered by{' '}
-          <a href="https://github.com/mmwx-group" target="_blank" rel="noreferrer">
-            <strong>妙妙屋</strong>
+          <a href="https://github.com/chnnic/jiwo-probe" target="_blank" rel="noreferrer">
+            <strong>Jiwo Probe</strong>
           </a>
         </div>
         <div>

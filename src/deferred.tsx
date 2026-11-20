@@ -16,6 +16,7 @@ const loadSystemTrend = () => import('./charts/SystemTrendChart')
 const loadTraffic = () => import('./charts/TrafficChart')
 const loadServerDetail = () => import('./ServerDetail')
 const loadForward = () => import('./ForwardOverview')
+const loadForwardTrend = () => import('./charts/ForwardTrendChart')
 
 export const TrendDialog = deferred(() => loadPingTrend().then((m) => m.TrendDialog))
 export const SystemTrendChart = deferred(() => loadSystemTrend().then((m) => m.SystemTrendChart))
@@ -23,17 +24,25 @@ export const TrafficDialog = deferred(() => loadTraffic().then((m) => m.TrafficD
 export const TrafficChart = deferred(() => loadTraffic().then((m) => m.TrafficChart))
 export const ServerDetail = deferred(() => loadServerDetail().then((m) => m.ServerDetail))
 export const ForwardOverview = deferred(() => loadForward().then((m) => m.ForwardOverview))
+export const ForwardTrendChart = deferred(() => loadForwardTrend().then((m) => m.ForwardTrendChart))
+
+const PREFETCH_DELAY_MS = 5_000
 
 let prefetched = false
-/** 首屏稳定后在空闲时预取图表模块；只执行一次，失败也不影响页面（点开时会再加载）。 */
+/** 首屏稳定后再预取图表模块（recharts 压缩后约 100 KB），不和主题包、首帧数据抢带宽；
+ *  省流量模式和 2G 不预取。只执行一次，失败也不影响页面（点开时会再加载）。 */
 export function prefetchDeferred(): void {
   if (prefetched || typeof window === 'undefined') return
   prefetched = true
   const run = () => {
-    for (const load of [loadPingTrend, loadSystemTrend, loadTraffic, loadServerDetail, loadForward]) {
+    for (const load of [loadPingTrend, loadSystemTrend, loadTraffic, loadServerDetail, loadForward, loadForwardTrend]) {
       load().catch(() => { /* 网络失败时保持按需加载 */ })
     }
   }
-  if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 5000 })
-  else setTimeout(run, 2000)
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection
+  if (connection?.saveData || connection?.effectiveType?.endsWith('2g')) return
+  window.setTimeout(() => {
+    if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 5000 })
+    else run()
+  }, PREFETCH_DELAY_MS)
 }

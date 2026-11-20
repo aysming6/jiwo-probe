@@ -12,14 +12,17 @@ import { getThemeOverride, parseThemeName } from './use-probe'
 import { EXTRA_LICENSE_BADGES, HEADER_LICENSE_BADGES } from './license-badges'
 import { FLAG_OPTIONS } from './country-flag'
 import { displayServerName } from './server-name'
-import { dailyTrafficRows, hasMoreDailyTraffic, hasTrafficPeriod, trafficRuleLabel, type TrafficRange } from './traffic-display'
+import { dailyTrafficRows, hasMoreDailyTraffic, hasTrafficPeriod, trafficPeriodText, trafficRuleLabel, type TrafficRange } from './traffic-display'
 import { BlackGoldGlobe, type PremiumProbeRegion } from './BlackGoldGlobe'
 import { useProbeRange } from './use-probe-range'
 import { probeBucketLabel } from './probe-ranges'
 import { CYCLE_LABELS, CYCLE_MONTHS, expiryDays, isPermanent } from './renewal'
 import './premium-probe.css'
+import { historyPingSeries, isIpv6Ping, primaryPing } from './ping-groups'
 import { serverHealth, averageLatency, percentage, resourcePercentage } from './server-health'
-import { availabilityCells, availabilityPct, chainLiveSpeed, formatAvailability, formatJitter, FORWARD_TRAFFIC_NOTE, FORWARD_TRAFFIC_SETTLE_MINUTES } from './forward-model'
+import { ProviderLogo } from './ProviderLogo'
+import { availabilityCells, availabilityPct, chainLiveSpeed, formatAvailability, formatJitter, hopMatrices, FORWARD_TRAFFIC_NOTE, FORWARD_TRAFFIC_SETTLE_MINUTES } from './forward-model'
+import { LazyCard } from './LazyCard'
 
 type ProbeData = ProbePayload
 
@@ -168,7 +171,7 @@ type PremiumProbePageProps = {
   isLoading: boolean
   isError: boolean
   // 主题切换回调（经典界面 ThemeSelect 同款语义: name=null 表示跟随主控）
-  onThemeChange?: (name: 'pixel' | 'flat' | 'anime' | 'glass' | 'lumina' | 'premium' | 'ran' | 'glassmorphism' | 'emerald' | 'lite' | 'luminaplus' | null) => void
+  onThemeChange?: (name: 'pixel' | 'flat' | 'anime' | 'glass' | 'sweet' | 'meow' | 'lumina' | 'premium' | 'ran' | 'glassmorphism' | 'emerald' | 'lite' | 'luminaplus' | 'nezha' | null) => void
 }
 
 type StatusFilter = 'all' | 'online' | 'offline'
@@ -283,8 +286,9 @@ function formatAxisDateTime(unixSeconds: number): string {
 
 function serverRegionKey(server: ProbeServer): string {
   return (
-    server.region_country ||
+    // 手动选的国旗（region）优先，按 IP 自动识别的 region_country 兜底（见 server-format probeRegion）
     flagToCountryCode(server.region) ||
+    server.region_country ||
     server.region?.trim() ||
     'UNKNOWN'
   ).toUpperCase()
@@ -832,7 +836,7 @@ function SmartSummary({ servers }: { servers: ProbeServer[] }) {
   const lossy = servers
     .map((server) => ({
       server,
-      loss: Math.max(-1, ...(server.ping || []).map((item) => item.loss_pct)),
+      loss: Math.max(-1, ...primaryPing(server.ping).map((item) => item.loss_pct)),
     }))
     .sort((left, right) => right.loss - left.loss)[0]
   const parts = [`${online}/${servers.length} 台服务器在线`]
@@ -1856,6 +1860,54 @@ function ForwardChainView({ wsChains }: { wsChains?: ForwardChainData[] }) {
         </div>
       </section>
 
+      {hopMatrices(chain).map((matrix) => (
+        <section className="premium-probe-forward-card" key={`${matrix.from}>${matrix.to}`}>
+          <header>
+            <h3>
+              <Target />
+              逐台延迟矩阵
+            </h3>
+            <span>
+              {matrix.from} → {matrix.to} · 行是本组每台，列是下一组每台
+            </span>
+          </header>
+          <div className="body">
+            <div className="fmx">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col" />
+                    {matrix.targets.map((target) => (
+                      <th scope="col" key={target} title={target}>
+                        <span><Twemoji>{target}</Twemoji></span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {matrix.rows.map((row, i) => (
+                    <tr key={`${row.name}-${i}`}>
+                      <th scope="row" title={row.name}>
+                        <span><Twemoji>{row.name}</Twemoji></span>
+                      </th>
+                      {row.cells.map((cell, j) => (
+                        <td
+                          key={j}
+                          className={`slat ${!cell ? "is-idle" : cell.tone === "down" ? "is-hi" : forwardLatencyClass(cell.ms ?? 0)}`}
+                        >
+                          {!cell ? "—" : cell.ms && cell.ms > 0 ? `${cell.ms} ms` : cell.tone === "down" ? "不可达" : "—"}
+                          {cell && cell.loss > 0 && <small>丢 {cell.loss}%</small>}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ))}
+
       {chain.traffic && chain.traffic.servers.length > 0 && (
         <section className="premium-probe-forward-card">
           <header>
@@ -1962,10 +2014,15 @@ function PremiumNetworkView({
       window.clearInterval(timer)
     }
   }, [range, hasSelectedServer, selectedServerIndex])
+  // 主控的平均把 IPv6 目标也算进去了；有 IPv6 目标时按 IPv4 目标重算（与其他主题同一口径）
+  const averageLabel = selectedServer?.ping?.some(isIpv6Ping) ? 'IPv4 目标平均' : '全部目标平均'
+  const historySeries = detail?.success
+    ? historyPingSeries(detail.series, detail.all_series, averageLabel)
+    : []
   const rows = selectedServer
     ? [selectedServer].map((server) => {
-        const series = server.ping || []
-        const effectiveSeries = detail?.success ? [detail.series] : series
+        const series = primaryPing(server.ping)
+        const effectiveSeries = detail?.success ? [historySeries[0]] : series
         const currentLatency = effectiveSeries
           .map((item) => item.current_ms)
           .filter((value) => value >= 0)
@@ -1977,7 +2034,7 @@ function PremiumNetworkView({
           index: selectedServerIndex,
           series: effectiveSeries,
           buckets: detail?.success
-            ? aggregatePingBuckets([detail.series])
+            ? aggregatePingBuckets([historySeries[0]])
             : aggregatePingBuckets(series),
           latency: currentLatency.length
             ? Math.round(
@@ -1992,12 +2049,7 @@ function PremiumNetworkView({
         }
       })
     : []
-  const chartSeries = detail?.success
-    ? [
-        { ...detail.series, key: '__avg__', label: '全部目标平均' },
-        ...(detail.all_series || []),
-      ]
-    : []
+  const chartSeries = historySeries
   const allChartTargetKeys = chartSeries.map(
     (item) => item.key || pingTargetID(item)
   )
@@ -2089,7 +2141,7 @@ function PremiumNetworkView({
                 )
               }}
             >
-              <option value='__avg__'>仅显示全部目标平均</option>
+              <option value='__avg__'>仅显示{averageLabel.startsWith('IPv4') ? ' ' : ''}{averageLabel}</option>
               <option value='__all__'>显示所有探测目标</option>
               {selectedTarget === '__custom__' && (
                 <option value='__custom__'>自定义目标组合</option>
@@ -2420,7 +2472,7 @@ function PremiumServerCard({
     ? `${formatTrafficCompact(trafficUsed)} / ${formatTrafficCompact(server.traffic_limit)}`
     : formatTrafficCompact(trafficUsed)
   const latency = averageLatency(server)
-  const losses = (server.ping || [])
+  const losses = primaryPing(server.ping)
     .map((item) => item.loss_pct)
     .filter((value) => value >= 0)
   const loss = losses.length
@@ -2434,7 +2486,7 @@ function PremiumServerCard({
     1,
     ...dailyTraffic.map((day) => day.total || day.uplink + day.downlink)
   )
-  const latencyBuckets = aggregatePingBuckets(server.ping || [])
+  const latencyBuckets = aggregatePingBuckets(primaryPing(server.ping))
   const latencySamples = latencyBuckets
     .map((bucket, bucketIndex): TrendSample | undefined => {
       if (bucket.ms === undefined) return undefined
@@ -2473,6 +2525,7 @@ function PremiumServerCard({
           </span>
         )}
         <UnlockButton server={server} />
+        <ProviderLogo path={server.provider_logo} name={server.provider_name} url={server.provider_url} />
         <span className='premium-probe-server-status'>
           <i
             className={cn(
@@ -2625,10 +2678,7 @@ function ServerDetailDrawer({
                   server.traffic_adjustment < 0 ? '−' : '+'
                 } ${formatTrafficCompact(Math.abs(server.traffic_adjustment))} = ${formatTrafficCompact(server.traffic_used)}`
               : null,
-          period:
-            server.period_start && server.period_end
-              ? `${server.period_start.slice(5)} — ${server.period_end.slice(5)}`
-              : null,
+          period: trafficPeriodText(server) ?? null,
           boot:
             (server.boot_traffic_up !== undefined ||
               server.boot_traffic_down !== undefined) &&
@@ -3377,13 +3427,19 @@ export function PremiumProbePage({
               ) : (
                 <div className='premium-probe-card-grid'>
                   {visibleServers.map((server, index) => (
-                    <PremiumServerCard
-                      server={server}
-                      index={index}
+                    <LazyCard
                       key={`${server.name || 'server'}-${index}`}
-                      onOpen={() => setSelectedServer(index)}
-                      showHealthScore={data?.show_health_score === true}
-                    />
+                      className='premium-probe-server-card'
+                      name={server.name || `服务器 ${index + 1}`}
+                      estimatedHeight={309}
+                    >
+                      <PremiumServerCard
+                        server={server}
+                        index={index}
+                        onOpen={() => setSelectedServer(index)}
+                        showHealthScore={data?.show_health_score === true}
+                      />
+                    </LazyCard>
                   ))}
                 </div>
               )}
@@ -3402,6 +3458,7 @@ export function PremiumProbePage({
       )}
 
       <footer className='premium-probe-footer'>
+        <span className='premium-probe-footer-credit'>Powered by <a href='https://github.com/chnnic/jiwo-probe' target='_blank' rel='noreferrer'>Jiwo Probe</a></span>
         <div className='premium-probe-footer-badges'>
           {(() => {
             // 与经典界面 Footer 同款去重: 本地 EXTRA 为主, 主控同名勋章覆盖, 其余主控勋章追加
@@ -3423,6 +3480,7 @@ export function PremiumProbePage({
         >
           <Sparkles />
         </button>
+        <span className='premium-probe-footer-credit is-controller'>Powered by <a href='https://github.com/mmwx-group' target='_blank' rel='noreferrer'>MMWX Group</a></span>
       </footer>
     </div>
   )
